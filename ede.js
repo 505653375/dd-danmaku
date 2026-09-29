@@ -1,4 +1,4 @@
-﻿// ==UserScript==
+// ==UserScript==
 // @name         Emby danmaku extension - Emby style
 // @description  Emby弹幕插件 - Emby风格
 // @namespace    https://github.com/l429609201/dd-danmaku
@@ -15,6 +15,41 @@
 
 (async function () {
     'use strict';
+window.require=window.require||function(deps,cb){
+    var M={
+        browser:{tv:false,mobile:false,electron:false,windows:false},
+        dialog:[function(o){
+            var ov=document.createElement('div');ov.id='dd-dlg';
+            ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999998;display:flex;align-items:center;justify-content:center;';
+            var d=document.createElement('div');d.id='dd-dlg-content';
+            d.style.cssText='background:#1a1a2e;color:#fff;border-radius:12px;padding:24px;min-width:500px;max-width:95vw;max-height:90vh;overflow-y:auto;';
+            if(o.title){var t=document.createElement('h2');t.textContent=o.title;d.appendChild(t);}
+            if(o.html){var h=document.createElement('div');h.innerHTML=o.html;d.appendChild(h);}
+            if(o.text){var p=document.createElement('p');p.textContent=o.text;d.appendChild(p);}
+            var bc=document.createElement('div');bc.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+            (o.buttons||[{name:'关闭'}]).forEach(function(b){var bn=document.createElement('button');bn.className='dd-dlg-btn';bn.textContent=b.name;bn.onclick=function(){ov.remove()};bc.appendChild(bn)});
+            d.appendChild(bc);ov.appendChild(d);
+            ov.onclick=function(e){if(e.target===ov)ov.remove()};
+            document.body.appendChild(ov);
+            return Promise.resolve({index:0});
+        }],
+        alert:[function(o){alert(o.text||o.title);return Promise.resolve()}],
+        toast:[function(o){}],
+        'emby-select':[],'emby-checkbox':[],'emby-slider':[],'emby-textarea':[],'emby-collapse':[],'emby-button':[],
+        playbackManager:{getCurrentPlayer:function(){return null},currentTime:function(){return 0},getPlayerState:function(){return{PlayState:{}}}},
+        events:{on:function(){},off:function(){},trigger:function(){}},
+        inputmanager:{trigger:function(){}}
+    };
+    var r=deps.map(function(x){return M[x]!==undefined?M[x]:undefined});
+    if(typeof cb==='function')cb.apply(null,r);
+    return Promise.resolve(r);
+};
+window.Emby=window.Emby||{
+    importModule:function(p){return fetch(p).then(function(r){return r.text()}).catch(function(){return null})},
+    InputManager:{trigger:function(){}},
+    Page:{goHome:function(){location.href='/web/index.html'}}
+};
+
     // [修复] 防止脚本被多次加载（index.html 引入 + CustomCssJS 注入等场景）
     if (window._ddDanmakuLoaded) {
         console.log('[dd-danmaku] 脚本已加载过，跳过重复执行');
@@ -27,12 +62,37 @@
     // SparkMD5 库路径 (用于文件哈希计算)
     let requireSparkMD5Path = 'https://danmu-api.misaka10876.top/tools/spark-md5.min.js';
     // 跨域代理 cf_worker
-    let corsProxy = 'https://danmu-api.misaka10876.top/cors/';
+    let corsProxy = 'https://ddplay-api.930524.xyz/cors/';
     // 用户代理标识
-    let userAgent = 'misaka10876/v1.0.0';
+    let userAgent = 'jellyfin-ede/v1.0.0';
     // 日志级别: 0=关闭, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG (默认 INFO)
     let logLevel = 3;
     // ------ 用户配置 end ------
+    // [修复] 拦截 XMLHttpRequest 从 PlaybackInfo 响应获取 itemId（Jellyfin 最可靠方式）
+    // Jellyfin 播放时会请求 /Items/{itemId}/PlaybackInfo，从中提取 MediaSources[0].Id
+    const _originalXhrOpen = XMLHttpRequest.prototype.open;
+    const _originalXhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (_, url) {
+        this._edeUrl = url;
+        _originalXhrOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+        this.addEventListener('load', function () {
+            try {
+                if (this._edeUrl && this._edeUrl.includes('/PlaybackInfo')) {
+                    const res = JSON.parse(this.responseText);
+                    if (res.MediaSources && res.MediaSources[0] && res.MediaSources[0].Id) {
+                        if (window.ede) {
+                            window.ede.itemId = res.MediaSources[0].Id;
+                            console.log('[dd-danmaku] itemId from XHR PlaybackInfo:', window.ede.itemId);
+                            localStorage.setItem('ede_last_item_id', window.ede.itemId);
+                        }
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        });
+        _originalXhrSend.apply(this, arguments);
+    };
     // note01: 部分 AndroidTV 仅支持最高 ES9 (支持 webview 内核版本 60 以上)
     // note02: url 禁止使用相对路径,非 web 环境的根路径为文件路径,非 http
 
@@ -153,8 +213,8 @@
         // --- 第1层：API 版本判断 ---
         let apiSaysOld = false;
         try {
-            if (ApiClient.isMinServerVersion) {
-                apiSaysOld = !ApiClient.isMinServerVersion("4.8.0.0");
+            if (ApiClient && ApiClient.isMinServerVersion) {
+                apiSaysOld = ApiClient.isMinServerVersion ? !ApiClient.isMinServerVersion("4.8.0.0") : false;
             } else {
                 const sv = ApiClient.serverVersion ? ApiClient.serverVersion() : '';
                 const parts = sv.split('.').map(Number);
@@ -196,36 +256,39 @@
         return { selector, isOld: finalIsOld };
     }
 
-    // https://fonts.google.com/icons
+    // Jellyfin 适配: 全部使用 SVG 图标替代 Material Design Icon 字体
+    const SVG = function(path, fill='currentColor') {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="${fill}">${path}</svg>`;
+    };
     const iconKeys = {
-        replay_30: 'replay_30',
-        replay_10: 'replay_10',
-        replay_5: 'replay_5',
-        replay: 'replay',
-        reset: 'repeat',
-        forward_media: 'forward_media', 
-        drag_indicator: 'drag_indicator',
-        forward_5: 'forward_5',
-        forward_10: 'forward_10',
-        forward_30: 'forward_30',
-        comment: 'comment',
-        comments_disabled: 'comments_disabled',
-        switch_on: 'toggle_on',
-        switch_off: 'toggle_off',
-        setting: 'tune',
-        search: 'search',
-        done: 'done_all',
-        done_disabled: 'remove_done',
-        more: 'more_horiz',
-        close: 'close',
-        refresh: 'refresh',
-        block: 'block',
-        text_format: 'translate',
-        person: 'person',
-        sentiment_very_satisfied: 'sentiment_very_satisfied',
-        check: 'check',
-        edit: 'edit',
-        layers_clear: 'layers_clear',
+        replay_30: SVG('<path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">30</text>'),
+        replay_10: SVG('<path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">10</text>'),
+        replay_5: SVG('<path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">5</text>'),
+        replay: SVG('<path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>'),
+        reset: SVG('<path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" transform="scale(-1,1) translate(-24,0)"/>'),
+        forward_media: SVG('<path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>'),
+        drag_indicator: SVG('<path d="M20 9H4v2h16V9zM4 15h16v-2H4v2z"/>'),
+        forward_5: SVG('<path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">5</text>'),
+        forward_10: SVG('<path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">10</text>'),
+        forward_30: SVG('<path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor">30</text>'),
+        comment: SVG('<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/>'),
+        comments_disabled: SVG('<path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM6 12h2v2H6v-2zm10 0h2v2h-2v-2z"/>'),
+        switch_on: SVG('<path d="M17 7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h10c2.76 0 5-2.24 5-5s-2.24-5-5-5zm0 8c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>', '#00a4ff'),
+        switch_off: SVG('<path d="M17 7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h10c2.76 0 5-2.24 5-5s-2.24-5-5-5zm0 8c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>', '#888'),
+        setting: SVG('<path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.05-.24-.24-.41-.47-.41h-3.84c-.24 0-.43.17-.47.41L9.25 5.35C8.66 5.59 8.12 5.92 7.63 6.29L5.24 5.33c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.16.47.06.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.06-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>'),
+        search: SVG('<path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>'),
+        done: SVG('<path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/>'),
+        done_disabled: SVG('<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>'),
+        more: SVG('<path d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>'),
+        close: SVG('<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>'),
+        refresh: SVG('<path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>'),
+        block: SVG('<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/>'),
+        text_format: SVG('<path d="M5 8h2v2H5V8zm0 4h2v2H5v-2zm0-8h2v2H5V4zm4 12h10v-2H9v2zm0-4h10V8H9v2zm0-4h6V4H9v2z"/>'),
+        person: SVG('<path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>'),
+        sentiment_very_satisfied: SVG('<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/>'),
+        check: SVG('<path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/>'),
+        edit: SVG('<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>'),
+        layers_clear: SVG('<path d="M19.81 14.99l1.19-.96-1.42-1.02-1.19.96 1.42 1.02zm-.45-4.72L21 9l-9-7-2.91 2.27 7.87 7.88 2.49-1.93zM3.27 1L2 2.27l4.22 4.22L3 9l1.63 1.27L12 16l2.1-1.63 1.42 1.02L12 18.2l-7.33-5.73L3 14.07l9 7 4.95-3.85L20.73 22 22 20.73 3.27 1z"/>'),
     };
 
     // 弹幕设置按钮自定义图标：圆形大框装"弹"字 + 右下角小齿轮角标
@@ -436,7 +499,7 @@
         debugTabIframeEnable: { id: 'danmakuDebugTabIframeEnable', defaultValue: false, name: '打开内嵌网页' },
         debugH5VideoAdapterEnable: { id: 'danmakuDebugH5VideoAdapterEnable', defaultValue: false, name: '查看视频适配器情况' },
         quickDebugOn: { id: 'danmakuQuickDebugOn', defaultValue: false, name: '快速调试' },
-        customeCorsProxyUrl: { id: 'danmakuCustomeCorsProxyUrl', defaultValue: corsProxy, name: '跨域代理前缀' },
+        customeCorsProxyUrl: { id: 'danmakuCustomeCorsProxyUrl', defaultValue: 'https://ddplay-api.930524.xyz/cors/', name: '跨域代理前缀' },
         customeDanmakuUrl: { id: 'danmakuCustomeDanmakuUrl', defaultValue: requireDanmakuPath, name: '弹幕引擎依赖' },
         customeGetCommentUrl: { id: 'danmakuCustomeGetCommentUrl', defaultValue: getApiTl(dandanplayApi.getComment), name: '获取指定弹幕库的所有弹幕' },
         customeGetExtcommentUrl: { id: 'danmakuCustomeGetExtcommentUrl', defaultValue: getApiTl(dandanplayApi.getExtcomment), name: '获取指定第三方url的弹幕' },
@@ -735,6 +798,7 @@
         error: (...args) => logLevel >= LOG_LEVEL.ERROR && console.error('[ERROR]', ...args),
     };
 
+    console.log('[dd-danmaku] logger defined, LOG_LEVEL:', LOG_LEVEL);
     // ------ 程序内部使用,请勿更改 end ------
 
     // ------ require start ------
@@ -1270,81 +1334,47 @@
 
 
     function initUI() {
-        // 已初始化（全局锁 + DOM 检查双保险，防止脚本被加载多次时各自的局部变量互不影响）
-        if (window._ddDanmakuInitUILock || getById(eleIds.danmakuCtr)) { return; }
-        window._ddDanmakuInitUILock = true; // 挂在 window 上，跨脚本实例共享
-        logger.info('正在初始化UI');
-
-        const serverVersion = ApiClient.serverVersion ? ApiClient.serverVersion() : '';
-        logger.info('[dd-danmaku] 服务器版本:', serverVersion);
-
-        // [综合方案] 使用三层探测替代单一 API 版本判断
-        const detected = detectMediaContainer();
-        mediaContainerQueryStr = detected.selector;
-        isVersionOld = detected.isOld;
-
-        if (!mediaContainerQueryStr.includes(notHide)) {
-            mediaContainerQueryStr += notHide;
+        // 页面未加载
+        let uiAnchor = document.getElementsByClassName('pause');
+        if (!uiAnchor || !uiAnchor[0]) {
+            return;
+        }
+        // 已初始化
+        if (document.getElementById(eleIds.danmakuCtr)) {
+            return;
+        }
+        // 弹幕按钮容器div
+        let uiEle = null;
+        document.querySelectorAll('.btnPause').forEach(function (element) {
+            if (element.offsetParent != null) {
+                uiEle = element.parentNode;
+            }
+        });
+        if (uiEle == null) {
+            return;
         }
 
-        // 弹幕按钮父容器 div,延时判断,精确 dom query 时播放器 UI 小概率暂未渲染
-        const ctrlWrapperQueryStr = `${mediaContainerQueryStr} .videoOsdBottom-maincontrols`;
-        waitForElement(ctrlWrapperQueryStr, (wrapper) => {
-            // [修复] 异步回调内二次检查，防止小秘等客户端上 initUI 被快速调用两次导致按钮重复
-            if (getById(eleIds.danmakuCtr)) {
-                logger.debug('[initUI] 弹幕按钮容器已存在，跳过重复创建');
-                return;
-            }
-            const commonWrapper = getByClass(classes.videoOsdBottomButtons += notHide, wrapper);
-            if (commonWrapper) {
-                wrapper = commonWrapper;
-            } else {
-                // Emby 客户端启动时会检测鼠标设备,无鼠标时, commonWrapper 将会 hide
-                // 手动模拟无鼠标步骤为浏览器页签打开后不要动鼠标,仅使用键盘操作
-                wrapper = getByClass(classes.videoOsdBottomButtonsTopRight, wrapper);
-            }
-            const menubar = document.createElement('div');
-            menubar.id = eleIds.danmakuCtr;
-            // [修改] 三路插入策略：
-            // 1. Web端美化CSS场景：topright容器存在（position:absolute脱离flex流），prepend插入其内部使弹幕按钮排在字幕等按钮左侧
-            // 2. 官方客户端场景：有 rightButtons（.videoOsdBottom-buttons-right），insertBefore插在其前面
-            // 3. 降级：都没有时 append 到末尾并 margin-left:auto 推到最右
-            const toprightWrapper = getByClass(classes.videoOsdBottomButtonsTopRight,
-                wrapper.closest('.videoOsdBottom-maincontrols') || wrapper.parentElement || wrapper);
-            const rightButtons = getByClass(classes.videoOsdBottomButtonsRight, wrapper);
-            if (toprightWrapper) {
-                toprightWrapper.prepend(menubar);
-            } else if (rightButtons) {
-                menubar.style.marginLeft = '';
-                wrapper.insertBefore(menubar, rightButtons);
-            } else {
-                menubar.style.marginLeft = 'auto';
-                wrapper.append(menubar);
-            }
-            mediaBtnOpts.forEach(opt => {
-                menubar.appendChild(embyButton(opt, opt.onClick));
-            });
-            // [修复] 按钮创建完成后，检查是否有 loadDanmaku 提前触发的 pending 加载环状态，有则补激活
-            if (window.ede && window.ede._pendingLoadingRing) {
-                const { progress, tip } = window.ede._pendingLoadingRing;
-                window.ede._pendingLoadingRing = null;
-                ddSetLoadingRing(progress, tip);
-            }
-            // [修改] 每次进入播放页强制重置弹幕开关为开启状态，避免上次关闭状态被持久化
-            lsSetItem(lsKeys.switch.id, true);
-            const danmakuEnabled = true;
-            const osdDanmakuSwitchBtn = getById(eleIds.danmakuSwitchBtn);
-            if (osdDanmakuSwitchBtn) {
-                // danmakuTextBtn 模式：只改内层颜色透明度，不影响整体按钮 opacity（避免加载环被压暗）
-                const inner = osdDanmakuSwitchBtn.querySelector('.dd-btn-inner');
-                if (inner) inner.style.opacity = danmakuEnabled ? '1' : '0.4';
-            }
-            logger.info('播放器弹幕UI初始化完成');
-        }, 0);
+        let parent = uiEle.parentNode;
+        let menubar = document.createElement('div');
+        menubar.id = eleIds.danmakuCtr;
+        if (!window.ede || !window.ede.episode_info) {
+            menubar.style.opacity = 0.5;
+        }
+
+        parent.insertBefore(menubar, uiEle.nextSibling);
+        mediaBtnOpts.forEach(opt => {
+            menubar.appendChild(embyButton(opt, opt.onClick));
+        });
+        lsSetItem(lsKeys.switch.id, true);
+        logger.info('UI init done');
     }
 
     async function getEmbyItemInfo() {
-        return require(['playbackManager']).then((items) => items[0].currentItem());
+        if (!window.ede || !window.ede.itemId) {
+            console.log('[dd-danmaku] getEmbyItemInfo: itemId is null, skipping');
+            return null;
+        }
+        return ApiClient.getItem(ApiClient.getCurrentUserId(), window.ede.itemId).catch(function(){return null});
     }
 
     async function fatchEmbyItemInfo(id) {
@@ -1357,12 +1387,15 @@
 
         // 步骤1: 使用 /api/v2/search/anime 搜索动画
         const searchUrl = `${prefix}/search/anime?keyword=${encodeURIComponent(anime)}`;
+        console.log('[dd-danmaku] search URL:', searchUrl);
         const signHeaders = await buildCustomApiSignHeaders(appId, appSecret, searchUrl);
         const searchResult = await fetchJson(searchUrl, Object.keys(signHeaders).length > 0 ? { headers: signHeaders } : {})
             .catch((error) => {
+                console.error('[dd-danmaku] /search/anime 查询失败:', error.message);
                 logger.error(`[API请求] /search/anime 查询失败: ${error.message}`);
                 return null;
             });
+        console.log('[dd-danmaku] search result:', searchResult ? JSON.stringify(searchResult).substring(0, 200) : 'null');
 
         if (!searchResult || !searchResult.animes || searchResult.animes.length === 0) {
             logger.debug(`[API请求] /search/anime 查询结果为空`);
@@ -2183,7 +2216,12 @@
     }
     async function fetchComment(episodeId, overridePrefix, appId, appSecret) {
          // [修复] 支持指定源：推理匹配时传入上一集使用的源，避免多源混淆
-        const rawPrefix = overridePrefix || window.ede.episode_info?.apiPrefix || dandanplayApi.prefix;
+        // [修复] 如果缓存的 apiPrefix 包含已失效的旧代理域名，改用当前 corsProxy 构造新地址
+        let cachedPrefix = window.ede.episode_info?.apiPrefix || '';
+        if (cachedPrefix.includes('danmu-api.misaka10876.top')) {
+            cachedPrefix = '';
+        }
+        const rawPrefix = overridePrefix || cachedPrefix || dandanplayApi.prefix;
         const commentAppId = appId || window.ede.episode_info?.apiAppId || '';
         const commentAppSecret = appSecret || window.ede.episode_info?.apiAppSecret || '';
         // [兼容] 规范化 prefix：兜底处理缓存中遗留的旧格式（如缺少 /api/v2 的 dandanplay 地址）
@@ -3301,49 +3339,54 @@
 
                 // A. 尝试 /match 接口 (仅在启用时调用)
                 if (matchApiEnabled && matchPayload) {
-                const matchResult = await fetchMatchApi(matchPayload, config.prefix, config.appId, config.appSecret);
+                try {
+                    const matchResult = await fetchMatchApi(matchPayload, config.prefix, config.appId, config.appSecret);
 
-                // [黑名单] 对官方 API 的 match 结果应用分集黑名单过滤
-                if (apiKey === 'official' && matchResult?.animes?.length > 0) {
-                    matchResult.animes = applyEpisodeBlacklist(matchResult.animes);
-                }
+                    // [黑名单] 对官方 API 的 match 结果应用分集黑名单过滤
+                    if (apiKey === 'official' && matchResult?.animes?.length > 0) {
+                        matchResult.animes = applyEpisodeBlacklist(matchResult.animes);
+                    }
 
-                // [改造6] A1. 精确匹配：isMatched: true 时做二次验证
-                if (matchResult?.isMatched && matchResult?.animes?.length > 0) {
-                    const match = matchResult.animes[0];
-                    // 二次验证：检查标题相似度是否合理
-                    const similarity = calculateStringSimilarity(
-                        normalizeTitle(animeName),
-                        normalizeTitle(match.animeTitle || '')
-                    );
-                    if (similarity >= 0.4) {
-                        result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...match, episodes: [{ episodeId: match.episodeId, episodeTitle: match.episodeTitle }], imageUrl: match.imageUrl } };
-                        logger.info(`[自动匹配] /match 精确命中，二次验证通过 (相似度: ${similarity.toFixed(2)})`);
-                    } else {
-                        // 相似度太低，降级为模糊匹配处理
-                        logger.warn(`[自动匹配] /match 声称精确匹配但标题不够像 ("${animeName}" vs "${match.animeTitle}", 相似度: ${similarity.toFixed(2)})，降级处理`);
+                    // [改造6] A1. 精确匹配：isMatched: true 时做二次验证
+                    if (matchResult?.isMatched && matchResult?.animes?.length > 0) {
+                        const match = matchResult.animes[0];
+                        // 二次验证：检查标题相似度是否合理
+                        const similarity = calculateStringSimilarity(
+                            normalizeTitle(animeName),
+                            normalizeTitle(match.animeTitle || '')
+                        );
+                        if (similarity >= 0.4) {
+                            result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...match, episodes: [{ episodeId: match.episodeId, episodeTitle: match.episodeTitle }], imageUrl: match.imageUrl } };
+                            logger.info(`[自动匹配] /match 精确命中，二次验证通过 (相似度: ${similarity.toFixed(2)})`);
+                        } else {
+                            // 相似度太低，降级为模糊匹配处理
+                            logger.warn(`[自动匹配] /match 声称精确匹配但标题不够像 ("${animeName}" vs "${match.animeTitle}", 相似度: ${similarity.toFixed(2)})，降级处理`);
+                            const bestMatch = selectBestMatch(animeName, matchResult.animes, null, 0.3);
+                            if (bestMatch) {
+                                result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...bestMatch, episodes: [{ episodeId: bestMatch.episodeId || bestMatch.matchedEpisodeId, episodeTitle: bestMatch.episodeTitle || bestMatch.matchedEpisodeTitle }], imageUrl: bestMatch.imageUrl } };
+                            }
+                        }
+                    }
+                    // A2. 模糊匹配：isMatched: false 时，用改造后的智能匹配
+                    else if (matchResult?.animes?.length > 0) {
                         const bestMatch = selectBestMatch(animeName, matchResult.animes, null, 0.3);
                         if (bestMatch) {
-                            result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...bestMatch, episodes: [{ episodeId: bestMatch.episodeId || bestMatch.matchedEpisodeId, episodeTitle: bestMatch.episodeTitle || bestMatch.matchedEpisodeTitle }], imageUrl: bestMatch.imageUrl } };
+                            // [修复] 季度守卫：如果搜索标题明确包含季度信息，但选出的最佳候选季度不匹配
+                            // 说明 /match 返回的候选中没有正确季度的条目，不应采纳，让 /search 路径兜底
+                            const parsedAnim = parseAnimeName(animeName);
+                            const bestParsed = parseCandidateTitle(bestMatch.animeTitle);
+                            const bestSeason = bestParsed.season || detectSeasonFromTitle(bestMatch.animeTitle, normalizeTitle(parsedAnim.title));
+                            if (parsedAnim.season && parsedAnim.season > 1 && bestSeason && bestSeason !== parsedAnim.season) {
+                                logger.warn(`[自动匹配] /match 模糊结果季度不匹配 (期望: S${String(parsedAnim.season).padStart(2,'0')}, 选中: "${bestMatch.animeTitle}" → S${String(bestSeason).padStart(2,'0')})，放弃 /match 结果，转 /search`);
+                                // 不设置 result，让流程 fall through 到 /search 路径
+                            } else {
+                                result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...bestMatch, episodes: [{ episodeId: bestMatch.episodeId || bestMatch.matchedEpisodeId, episodeTitle: bestMatch.episodeTitle || bestMatch.matchedEpisodeTitle }], imageUrl: bestMatch.imageUrl } };
+                            }
                         }
                     }
-                }
-                // A2. 模糊匹配：isMatched: false 时，用改造后的智能匹配
-                else if (matchResult?.animes?.length > 0) {
-                    const bestMatch = selectBestMatch(animeName, matchResult.animes, null, 0.3);
-                    if (bestMatch) {
-                        // [修复] 季度守卫：如果搜索标题明确包含季度信息，但选出的最佳候选季度不匹配
-                        // 说明 /match 返回的候选中没有正确季度的条目，不应采纳，让 /search 路径兜底
-                        const parsedAnim = parseAnimeName(animeName);
-                        const bestParsed = parseCandidateTitle(bestMatch.animeTitle);
-                        const bestSeason = bestParsed.season || detectSeasonFromTitle(bestMatch.animeTitle, normalizeTitle(parsedAnim.title));
-                        if (parsedAnim.season && parsedAnim.season > 1 && bestSeason && bestSeason !== parsedAnim.season) {
-                            logger.warn(`[自动匹配] /match 模糊结果季度不匹配 (期望: S${String(parsedAnim.season).padStart(2,'0')}, 选中: "${bestMatch.animeTitle}" → S${String(bestSeason).padStart(2,'0')})，放弃 /match 结果，转 /search`);
-                            // 不设置 result，让流程 fall through 到 /search 路径
-                        } else {
-                            result = { directMatch: true, apiPrefix: config.prefix, apiName: config.name, apiAppId: config.appId || '', apiAppSecret: config.appSecret || '', episodeInfo: { ...bestMatch, episodes: [{ episodeId: bestMatch.episodeId || bestMatch.matchedEpisodeId, episodeTitle: bestMatch.episodeTitle || bestMatch.matchedEpisodeTitle }], imageUrl: bestMatch.imageUrl } };
-                        }
-                    }
+                } catch (matchError) {
+                    // /match 失败（如代理不支持 POST）→ 回退到 /search/episodes
+                    logger.warn(`[自动匹配] /match 接口失败，回退到 /search: ${matchError.message || matchError}`);
                 }
                 }
 
@@ -3823,65 +3866,41 @@
 
         const _media = document.querySelector(mediaQueryStr);
         if (!_media) {
-            // this only working on quickDebug
-            if (!window.ede.danmaku) {
-                window.ede.danmaku = { comments: _comments, };
-            }
-            // 设置弹窗内的弹幕信息
-            buildCurrentDanmakuInfo(currentDanmakuInfoContainerId);
-            // throw new Error('创建弹幕失败：用户已退出视频播放页面。');
-            logger.warn('用户已退出视频播放页面，停止创建。');
+            logger.warn('未找到 video 标签，退出');
             return;
         }
-        if (!isVersionOld) { _media.style.position = 'absolute'; }
-        // from https://github.com/Izumiko/jellyfin-danmaku/blob/jellyfin/ede.js#L1104
+
+        // Jellyfin 适配: 弹幕容器使用固定定位，尺寸基于视口（不依赖 video 尺寸）
         const wrapperTop = 0;
-        // 播放器 UI 顶部阴影
         let wrapper = getById(eleIds.danmakuWrapper);
         wrapper && wrapper.remove();
         wrapper = document.createElement('div');
         wrapper.id = eleIds.danmakuWrapper;
+        // 使用 fixed 定位，覆盖整个视口顶部区域
         wrapper.style.position = 'fixed';
-        wrapper.style.width = '100%';
-        wrapper.style.height = `calc(${lsGetItem(lsKeys.heightPercent.id)}% - ${wrapperTop}px)`;
-        wrapper.style.backgroundColor = lsGetItem(lsKeys.debugShowDanmakuWrapper.id) ? styles.colors.highlight : '';
-        // wrapper.style.opacity = lsGetItem(lsKeys.fontOpacity.id);
-        // 弹幕整体透明度
+        wrapper.style.left = '0';
         wrapper.style.top = wrapperTop + 'px';
+        wrapper.style.width = '100vw';
+        wrapper.style.height = Math.round(window.innerHeight * (lsGetItem(lsKeys.heightPercent.id) / 100)) + 'px';
         wrapper.style.pointerEvents = 'none';
-        // [优化] 告诉浏览器这个层是会变的，让 GPU 提前准备
-        wrapper.style.willChange = 'transform, opacity';
+        wrapper.style.zIndex = '9999';
+        wrapper.style.overflow = 'hidden';
 
-        // [综合方案] 容器查找：当前选择器 → 去掉:not(.hide) → 尝试另一版本选择器 → video父元素兜底
-        let _container = null;
-        const altSelector = isVersionOld ? _CONTAINER_SELECTORS.new : _CONTAINER_SELECTORS.old;
-        try {
-            _container = await waitForElement(mediaContainerQueryStr, null, 6000);
-        } catch (e1) {
-            logger.warn(`[弹幕容器] "${mediaContainerQueryStr}" 查找超时，尝试去掉 :not(.hide)...`);
-            const noHideSelector = mediaContainerQueryStr.replace(/:not\(\.hide\)/g, '');
-            try {
-                _container = await waitForElement(noHideSelector, null, 3000);
-                logger.info(`[弹幕容器] 使用 "${noHideSelector}" 找到容器`);
-            } catch (e2) {
-                // 尝试另一版本的选择器（可能版本检测误判）
-                logger.warn(`[弹幕容器] 尝试另一版本选择器: "${altSelector}"...`);
-                const altEl = document.querySelector(altSelector) || document.querySelector(altSelector.replace(/:not\(\.hide\)/g, ''));
-                if (altEl) {
-                    _container = altEl;
-                    // 自动修正全局选择器，后续不再走错
-                    mediaContainerQueryStr = altSelector + (altSelector.includes(notHide) ? '' : notHide);
-                    isVersionOld = (altSelector === _CONTAINER_SELECTORS.old);
-                    logger.warn(`[弹幕容器] 版本选择器已自动修正为: "${mediaContainerQueryStr}" (isOld: ${isVersionOld})`);
-                } else {
-                    // 最终兜底：video 父元素或 body
-                    const videoEl = document.querySelector(mediaQueryStr);
-                    _container = videoEl?.parentElement || document.body;
-                    logger.warn(`[弹幕容器] 全部选择器超时，使用 fallback: ${_container.tagName}#${_container.id || ''}`);
-                }
-            }
-        }
-        _container.prepend(wrapper);
+        // 直接添加到 body（避免被父容器的 overflow:hidden 裁剪）
+        document.body.appendChild(wrapper);
+
+        console.log('[dd-danmaku] wrapper:', {
+            w: wrapper.style.width,
+            h: wrapper.style.height,
+            vh: window.innerHeight,
+            videoExists: !!_media,
+            videoRect: _media.getBoundingClientRect ? {
+                w: Math.round(_media.getBoundingClientRect().width),
+                h: Math.round(_media.getBoundingClientRect().height),
+                display: getComputedStyle(_media).display
+            } : 'no rect'
+        });
+        wrapper.style.willChange = 'transform, opacity';
         let _speed = 144 * (lsGetItem(lsKeys.speed.id) / 100);
         // 检查 Danmaku 库是否已加载，如果未加载则等待
         const danmakuAvailable = typeof Danmaku !== 'undefined';
@@ -4900,73 +4919,185 @@
     }
 
     function createDialog() {
-        require([
-            'emby-select', 'emby-checkbox', 'emby-slider', 'emby-textarea', 'emby-collapse'
-            , 'emby-button',
-        ]);
-        const html = `<div id="${eleIds.dialogContainer}"></div>`;
-        embyDialog({ html, buttons: [{ name: '关闭' }] });
-        waitForElement('#' + eleIds.dialogContainer, afterEmbyDialogCreated);
+        // 防抖：防止快速点击创建多个弹窗
+        if (window._ddDanmakuDialogCreating) { return; }
+        window._ddDanmakuDialogCreating = true;
+        setTimeout(function() { window._ddDanmakuDialogCreating = false; }, 500);
+
+        try {
+            closeDialog(); // 关闭已有弹窗
+
+            // 遮罩层（点击关闭）
+            var backdrop = document.createElement('div');
+            backdrop.id = 'dd-dlg-backdrop';
+            backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999998;';
+            backdrop.onclick = function() { closeDialog(); };
+            document.body.appendChild(backdrop);
+
+            // 弹窗主体（独立层，不拦截外部点击）
+            var dlg = document.createElement('div');
+            dlg.id = 'dd-dlg-content';
+            dlg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
+                'background:#1a1a2e;color:#fff;border-radius:12px;padding:20px;min-width:500px;max-width:90vw;max-height:85vh;' +
+                'overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.6);z-index:999999;';
+
+            // Tab 容器
+            var tabsNav = document.createElement('div');
+            tabsNav.style.cssText = 'display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;flex-wrap:wrap;';
+            dlg.appendChild(tabsNav);
+
+            // 内容容器
+            var content = document.createElement('div');
+            content.id = eleIds.dialogContainer;
+            dlg.appendChild(content);
+
+            // 底部按钮
+            var footer = document.createElement('div');
+            footer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px;';
+            var closeBtn = document.createElement('button');
+            closeBtn.textContent = '关闭';
+            closeBtn.style.cssText = 'background:#00a4ff;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;';
+            closeBtn.onclick = function() { closeDialog(); };
+            footer.appendChild(closeBtn);
+            dlg.appendChild(footer);
+
+            document.body.appendChild(dlg);
+
+            // 创建 tabs
+            danmakuTabOpts.forEach(function(tab, idx) {
+                var btn = document.createElement('button');
+                btn.textContent = tab.name;
+                btn.style.cssText = (idx === 0 ? 'background:#00a4ff;color:#fff;' : 'background:transparent;color:#ccc;') +
+                    'border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;';
+                btn.onclick = (function(t, i) {
+                    return function() {
+                        tabsNav.querySelectorAll('button').forEach(function(b, bi) {
+                            b.style.background = bi === i ? '#00a4ff' : 'transparent';
+                            b.style.color = bi === i ? '#fff' : '#ccc';
+                        });
+                        danmakuTabOpts.forEach(function(t2, i2) {
+                            var el = document.getElementById(t2.id);
+                            if (el) { el.hidden = i2 !== i; }
+                        });
+                    };
+                })(tab, idx);
+                tabsNav.appendChild(btn);
+            });
+
+            // 创建 tab 内容容器
+            danmakuTabOpts.forEach(function(tab, idx) {
+                var div = document.createElement('div');
+                div.id = tab.id;
+                div.style.color = '#ccc';
+                div.hidden = idx !== 0;
+                content.appendChild(div);
+            });
+
+            // 加载内容（等待 itemId）
+            var tryInit = function() {
+                if (window.ede && window.ede.itemId) {
+                    danmakuTabOpts.forEach(function(tab) {
+                        try { tab.buildMethod(tab.id); } catch(e) {}
+                    });
+                } else {
+                    content.innerHTML = '<div style="padding:20px;color:#aaa;text-align:center;">正在获取视频信息...</div>';
+                    setTimeout(tryInit, 300);
+                }
+            };
+            setTimeout(tryInit, 150);
+
+        } catch(err) {
+            console.error('[dd-danmaku] createDialog failed:', err);
+        }
+    }
+
+    function closeDialog() {
+        var backdrop = document.getElementById('dd-dlg-backdrop');
+        var dlg = document.getElementById('dd-dlg-content');
+        if (backdrop) { backdrop.remove(); }
+        if (dlg) { dlg.remove(); }
     }
 
     async function afterEmbyDialogCreated(dialogContainer) {
-        const itemInfoMap = await getMapByEmbyItemInfo();
-        if (itemInfoMap) {
-            window.ede.searchDanmakuOpts = {
-                _id_key: itemInfoMap._id_key,
-                _season_key: itemInfoMap._season_key,
-                _episode_key: itemInfoMap._episode_key,
-                animeId: itemInfoMap.animeId,
-                animeName: itemInfoMap.animeName,
-                seriesName: itemInfoMap.seriesName,
-                seriesOrMovieId: itemInfoMap.seriesOrMovieId,
-                episode: (parseInt(itemInfoMap.episode) || 1) - 1, // convert to index
-                animes: [],
-            }
-        }
-        let formDialogHeader = getByClass(classes.formDialogHeader);
-        const formDialogFooter = getByClass(classes.formDialogFooter);
-        formDialogHeader = formDialogHeader || dialogContainer;
-        const tabsMenuContainer = document.createElement('div');
-        tabsMenuContainer.className = classes.embyTabsMenu;
-        tabsMenuContainer.append(embyTabs(danmakuTabOpts, danmakuTabOpts[0].id, 'id', 'name', (value) => {
-            danmakuTabOpts.forEach(obj => {
-                const elem = getById(obj.id);
-                if (elem) { elem.hidden = obj.id !== value.id; }
-            });
-        }));
-        formDialogHeader.append(tabsMenuContainer);
-        formDialogHeader.style = 'width: 100%; padding: 0; height: auto;';
-
-        // [性能优化] 延迟构建 tab 内容，避免同步构建所有 tab 导致弹幕动画卡顿
-        // 原理：只立即构建当前可见的第一个 tab，其余 tab 延迟到下一帧再构建
-        const builtTabs = new Set();
-        danmakuTabOpts.forEach((tab, index) => {
-            const tabContainer = document.createElement('div');
-            tabContainer.id = tab.id;
-            tabContainer.style.textAlign = 'left';
-            tabContainer.hidden = index != 0;
-            dialogContainer.append(tabContainer);
-        });
-
-        // 立即构建第一个 tab（用户能看到的）
+        console.log('[dd-danmaku] afterEmbyDialogCreated: start');
         try {
-            danmakuTabOpts[0].buildMethod(danmakuTabOpts[0].id);
-            builtTabs.add(danmakuTabOpts[0].id);
-        } catch (error) { logger.error(error); }
+            const itemInfoMap = await getMapByEmbyItemInfo();
+            console.log('[dd-danmaku] afterEmbyDialogCreated: itemInfoMap =', itemInfoMap ? 'OK' : 'null');
+            if (itemInfoMap) {
+                window.ede.searchDanmakuOpts = {
+                    _id_key: itemInfoMap._id_key,
+                    _season_key: itemInfoMap._season_key,
+                    _episode_key: itemInfoMap._episode_key,
+                    animeId: itemInfoMap.animeId,
+                    animeName: itemInfoMap.animeName,
+                    seriesName: itemInfoMap.seriesName,
+                    seriesOrMovieId: itemInfoMap.seriesOrMovieId,
+                    episode: (parseInt(itemInfoMap.episode) || 1) - 1,
+                    animes: [],
+                }
+            }
 
-        // 其余 tab 延迟构建（不阻塞主线程，不影响弹幕动画）
-        requestAnimationFrame(() => {
-            danmakuTabOpts.forEach((tab) => {
-                if (builtTabs.has(tab.id)) return;
+            // 创建 tabs 容器
+            var tabsContainer = document.createElement('div');
+            tabsContainer.style.cssText = 'display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;';
+            dialogContainer.appendChild(tabsContainer);
+
+            // 创建 tab 内容容器
+            var tabContentContainer = document.createElement('div');
+            tabContentContainer.id = 'dd-tab-content';
+            dialogContainer.appendChild(tabContentContainer);
+
+            // 创建 tabs
+            var tabs = {};
+            danmakuTabOpts.forEach(function(tab) {
+                var tabBtn = document.createElement('button');
+                tabBtn.textContent = tab.name;
+                tabBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);' +
+                    'color:#ccc;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;';
+                tabBtn.onclick = (function(t, idx) {
+                    return function() {
+                        // 切换 tab 样式
+                        tabsContainer.querySelectorAll('button').forEach(function(b) {
+                            b.style.background = 'rgba(255,255,255,0.1)';
+                            b.style.color = '#ccc';
+                        });
+                        tabBtn.style.background = '#00a4ff';
+                        tabBtn.style.color = '#fff';
+                        // 切换内容
+                        danmakuTabOpts.forEach(function(t2, i2) {
+                            var el = document.getElementById(t2.id);
+                            if (el) { el.hidden = i2 !== idx; }
+                        });
+                    };
+                })(tab, danmakuTabOpts.indexOf(tab));
+                tabs[tab.id] = tabBtn;
+                tabsContainer.appendChild(tabBtn);
+
+                // 创建 tab 内容
+                var tabDiv = document.createElement('div');
+                tabDiv.id = tab.id;
+                tabDiv.style.color = '#ccc';
+                tabContentContainer.appendChild(tabDiv);
+            });
+
+            // 默认选中第一个 tab
+            if (danmakuTabOpts.length > 0) {
+                tabsContainer.querySelector('button').click();
+            }
+
+            // 构建所有 tab 内容
+            danmakuTabOpts.forEach(function(tab) {
                 try {
                     tab.buildMethod(tab.id);
-                    builtTabs.add(tab.id);
-                } catch (error) { logger.error(error); }
+                } catch (error) {
+                    console.error('[dd-danmaku] tab build failed:', tab.id, error);
+                }
             });
-        });
-        if (formDialogFooter) {
-            formDialogFooter.style.padding = '0.3em';
+
+            console.log('[dd-danmaku] afterEmbyDialogCreated: complete');
+        } catch (err) {
+            console.error('[dd-danmaku] afterEmbyDialogCreated failed:', err);
+            throw err;
         }
     }
 
@@ -5028,7 +5159,7 @@
                         <div id="${eleIds.timelineOffsetDiv}" style="width: 15.5em; text-align: center;"></div>
                         <label style="${styles.embySliderLabel}"></label>
                     </div>
-                    <div is="emby-collapse" title="弹幕字体样式" data-expanded="false">
+                    <div  title="弹幕字体样式" data-expanded="false">
                         <div class="${classes.collapseContentNav}">
                             <div style="${styles.embySlider}">
                                 <label class="${classes.embyLabel}" style="width: 5em;">${lsKeys.fontWeight.name}: </label>
@@ -5072,7 +5203,7 @@
                     </div>
                     <div id="${eleIds.settingsCtrl}" style="margin: 0.6em 0;"></div>
                     <textarea id="${eleIds.settingsText}" style="display: none;resize: vertical;width: 100%" rows="20"
-                        is="emby-textarea" class="txtOverview emby-textarea"></textarea>
+                         class="txtOverview emby-textarea"></textarea>
                 </div>
             </div>
         `;
@@ -5371,15 +5502,15 @@
                             </div>
                             <label class="${classes.embyLabel}">弹弹 play 附加的第三方 url: </label>
                         </div>
-                        <button is="emby-button" type="button" class="raised emby-button" id="btnClearLocalMatchCache">清除本地匹配缓存</button>
+                        <button  type="button" class="raised emby-button" id="btnClearLocalMatchCache">清除本地匹配缓存</button>
                     </div>
                     <div id="${eleIds.extUrlsDiv}"></div>
                 </div>
-                <div is="emby-collapse" title="服务端 Danmu 插件">
+                <div  title="服务端 Danmu 插件">
                     <div class="${classes.collapseContentNav}">
                         <div id="${eleIds.danmuPluginDiv}" class="${classes.embyCheckboxList}" style="${styles.embyCheckboxList}"></div>
                     </div>
-            <div is="emby-collapse" title="API选择、自定义API配置">
+            <div  title="API选择、自定义API配置">
                 <div class="${classes.collapseContentNav}">
                     <div id="${eleIds.apiSelectDiv}" class="${classes.embyCheckboxList}" style="${styles.embyCheckboxList} align-items: center;">
                         <!-- API 优先级列表将在这里创建 -->
@@ -5861,10 +5992,12 @@
         renderSourceList();
 
         const searchNameDiv = getById(eleIds.danmakuSearchNameDiv);
+        if (!searchNameDiv) { return; }
+        searchNameDiv.innerHTML = '';
         // [开关] 根据「文件名拼接季集号」决定搜索框预填充内容
-        const opts = window.ede.searchDanmakuOpts;
+        const opts = window.ede.searchDanmakuOpts || {};
         const appendSE = lsGetItem(lsKeys.appendSeasonEpisode.id);
-        const searchValue = appendSE ? opts.animeName : (opts.seriesName || opts.animeName);
+        const searchValue = appendSE ? (opts.animeName || '') : (opts.seriesName || opts.animeName || '');
         searchNameDiv.append(embyInput({ id: eleIds.danmakuSearchName, value: searchValue, type: 'search' }
             , doDanmakuSearchEpisode));
         searchNameDiv.append(embyButton({ label: '搜索', iconKey: iconKeys.search}, doDanmakuSearchEpisode));
@@ -6080,7 +6213,8 @@
             }
             // 使用自定义API且无 imageUrl 时，不显示图片
         }
-        const posterStyle = 'width: calc((var(--videoosd-tabs-height) - 3em) * (2 / 3)); margin-right: 1em;';
+        // Jellyfin 适配: 使用固定宽度而非不存在的 CSS 变量
+        const posterStyle = 'width: 120px; height: auto; margin-right: 12px; border-radius: 4px;';
         const posterDiv = getById(eleIds.posterImgDiv, container);
         if (posterSrc) {
             posterDiv.append(embyImgButton(embyImg(posterSrc), posterStyle));
@@ -6186,7 +6320,7 @@
         const container = getById(containerId);
         let template = `
             <div style="height: 30em;">
-                <div is="emby-collapse" title="弹幕屏蔽" data-expanded="true">
+                <div  title="弹幕屏蔽" data-expanded="true">
                     <div class="${classes.collapseContentNav}">
                         <div id="${eleIds.danmakuTypeFilterDiv}" style="margin-bottom: 0.2em;">
                             <label class="${classes.embyLabel}">${lsKeys.typeFilter.name}: </label>
@@ -6199,7 +6333,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="弹幕高级屏蔽">
+                <div  title="弹幕高级屏蔽">
                     <div class="${classes.collapseContentNav}">
                         <div>
                             <div style="${styles.embySlider}">
@@ -6231,7 +6365,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="弹幕位置转换">
+                <div  title="弹幕位置转换">
                     <div class="${classes.collapseContentNav}">
                         <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1em; padding: 0.5em 0;">
                     <div style="flex: 1; display: flex; align-items: center; min-width: 250px;">
@@ -6245,7 +6379,7 @@
                 </div>
                 </div>
                 </div>
-                <div is="emby-collapse" title="额外设置">
+                <div  title="额外设置">
                     <div class="${classes.collapseContentNav}" style="padding-top: 0.5em !important;">
                         <div id="${eleIds.extCheckboxDiv}" class="${classes.embyCheckboxList}" style="${styles.embyCheckboxList}"></div>
                         <div id="${eleIds.danmakuChConverDiv}" style="margin-bottom: 0.2em;">
@@ -6256,7 +6390,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="自动匹配">
+                <div  title="自动匹配">
                     <div class="${classes.collapseContentNav}" style="padding-top: 0.5em !important;">
                         <div id="${eleIds.autoLoadSwitchDiv}" style="margin-bottom: 0.5em;"></div>
                         <div id="${eleIds.matchApiEnableDiv}" style="margin-bottom: 0.5em;"></div>
@@ -6268,10 +6402,10 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="集数偏移">
+                <div  title="集数偏移">
                     <div id="${eleIds.episodeOffsetRulesDiv}" class="${classes.collapseContentNav}"></div>
                 </div>
-                <div is="emby-collapse" title="播放界面设置">
+                <div  title="播放界面设置">
                     <div class="${classes.collapseContentNav}">
                         <div id="${eleIds.osdCheckboxDiv}" class="${classes.embyCheckboxList}" style="${styles.embyCheckboxList}"></div>
                         <div>
@@ -6287,7 +6421,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="播放设置">
+                <div  title="播放设置">
                     <div class="${classes.collapseContentNav}">
                         <label class="${classes.embyLabel}">单次定时执行: </label>
                         <div id="${eleIds.timeoutCallbackTypeDiv}"></div>
@@ -6300,7 +6434,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="Bangumi 设置">
+                <div  title="Bangumi 设置">
                     <div class="${classes.collapseContentNav}" style="padding-top: 0.5em !important;">
                         <label id="${eleIds.bgmSearchFallbackLabel}" class="${classes.embyLabel}"></label>
                         <div class="${classes.embyFieldDesc}" style="margin-bottom: 0.5em;">
@@ -6338,7 +6472,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="TMDB 集数映射设置">
+                <div  title="TMDB 集数映射设置">
                     <div class="${classes.collapseContentNav}" style="padding-top: 0.5em !important;">
                         <label id="${eleIds.tmdbEnableLabel}" class="${classes.embyLabel}"></label>
                         <div id="${eleIds.tmdbSettingsDiv}">
@@ -6361,7 +6495,7 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="配置持久化">
+                <div  title="配置持久化">
                     <div class="${classes.collapseContentNav}" style="padding-top: 0.5em !important;">
                         <div style="display: flex; gap: 20px; align-items: center;">
                             <label id="${eleIds.persistenceEnableLabel}" class="${classes.embyLabel}"></label>
@@ -6372,13 +6506,13 @@
                                 <label id="${eleIds.persistenceNamespaceLabel}" class="${classes.embyLabel}" for="${eleIds.persistenceNamespaceInput}">
                                     ${lsKeys.configPersistenceNamespace.name}
                                 </label>
-                                <input id="${eleIds.persistenceNamespaceInput}" is="emby-input" type="text" class="${classes.embyInput}" />
+                                <input id="${eleIds.persistenceNamespaceInput}"  type="text" class="${classes.embyInput}" />
                             </div>
                             <div style="display: flex; gap: 10px; margin-top: 1em;">
-                                <button id="btnPersistenceUpload" is="emby-button" type="button" class="raised" style="flex: 1;">
+                                <button id="btnPersistenceUpload"  type="button" class="raised" style="flex: 1;">
                                     <span>同步到服务器</span>
                                 </button>
-                                <button id="btnPersistenceLoad" is="emby-button" type="button" class="raised" style="flex: 1;">
+                                <button id="btnPersistenceLoad"  type="button" class="raised" style="flex: 1;">
                                     <span>从服务器恢复</span>
                                 </button>
                             </div>
@@ -6389,13 +6523,13 @@
                         </div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="媒体库排除设置">
+                <div  title="媒体库排除设置">
                     <div id="${eleIds.excludedLibrariesDiv}" class="${classes.collapseContentNav}"></div>
                 </div>
-                <div is="emby-collapse" title="搜索内容黑名单">
+                <div  title="搜索内容黑名单">
                     <div id="${eleIds.searchBlacklistDiv}" class="${classes.collapseContentNav}"></div>
                 </div>
-                <div is="emby-collapse" title="自定义接口地址">
+                <div  title="自定义接口地址">
                     <div id="${eleIds.customeUrlsDiv}" class="${classes.collapseContentNav}"></div>
                 </div>
             </div>
@@ -6554,22 +6688,22 @@
                 </div>
                 <div style="margin-bottom: 0.8em;">
                     <label class="${classes.embyLabel}">当前规则 (JSON):</label>
-                    <textarea id="episodeOffsetJsonEditor" is="emby-textarea" class="txtOverview emby-textarea"
+                    <textarea id="episodeOffsetJsonEditor"  class="txtOverview emby-textarea"
                         style="width: 100%; resize: vertical; font-family: monospace; font-size: 0.9em;" rows="10">${escapeHtml(currentJson)}</textarea>
                 </div>
                 <div style="display: flex; gap: 0.5em; margin-bottom: 1em;">
-                    <button id="episodeOffsetSaveBtn" is="emby-button" type="button" class="raised button-submit emby-button">
+                    <button id="episodeOffsetSaveBtn"  type="button" class="raised button-submit emby-button">
                         <span>保存规则</span>
                     </button>
-                    <button id="episodeOffsetLoadExampleBtn" is="emby-button" type="button" class="raised emby-button">
+                    <button id="episodeOffsetLoadExampleBtn"  type="button" class="raised emby-button">
                         <span>加载示例</span>
                     </button>
-                    <button id="episodeOffsetClearBtn" is="emby-button" type="button" class="raised emby-button">
+                    <button id="episodeOffsetClearBtn"  type="button" class="raised emby-button">
                         <span>清空规则</span>
                     </button>
                 </div>
                 <div id="episodeOffsetStatus" class="${classes.embyFieldDesc}" style="margin-bottom: 1em;"></div>
-                <div is="emby-collapse" title="字段说明" data-expanded="true">
+                <div  title="字段说明" data-expanded="true">
                     <div class="${classes.collapseContentNav}">
                         <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
                             <tr style="border-bottom: 1px solid rgba(255,255,255,0.15);">
@@ -6591,7 +6725,7 @@
                         </table>
                     </div>
                 </div>
-                <div is="emby-collapse" title="映射示例">
+                <div  title="映射示例">
                     <div class="${classes.collapseContentNav}">
                         <pre style="background: rgba(0,0,0,0.3); padding: 0.8em; border-radius: 4px; font-size: 0.85em; overflow-x: auto; white-space: pre-wrap;">${escapeHtml(exampleJson)}</pre>
                         <div class="${classes.embyFieldDesc}" style="margin-top: 0.5em;">
@@ -7437,7 +7571,7 @@
                 const typeLabel = lib.collectionType ? ` <span style="color: #888; font-size: 0.85em;">(${lib.collectionType})</span>` : '';
                 checkboxHtml += `
                     <label class="emby-checkbox-label" style="display: flex; align-items: center; padding: 0.4em 0; cursor: pointer;">
-                        <input type="checkbox" is="emby-checkbox" class="libraryExcludeCheckbox"
+                        <input type="checkbox"  class="libraryExcludeCheckbox"
                             data-library-id="${lib.id}" data-library-name="${lib.name}"
                             ${isChecked ? 'checked' : ''} />
                         <span style="margin-left: 0.5em;">${lib.name}${typeLabel}</span>
@@ -7510,7 +7644,7 @@
 
             <div style="margin-bottom: 1.5em;">
                 <label class="${classes.embyCheckboxLabel}">
-                    <input type="checkbox" is="emby-checkbox" id="${eleIds.blacklistApplyToCustomApiCheckbox}"
+                    <input type="checkbox"  id="${eleIds.blacklistApplyToCustomApiCheckbox}"
                         ${blacklistApplyToCustomApi ? 'checked' : ''} />
                     <span>应用黑名单到自定义接口</span>
                 </label>
@@ -7524,7 +7658,7 @@
                 <div class="${classes.embyFieldDesc}" style="margin-bottom: 0.5em;">
                     示例: <code>剧场版|OVA|特别篇</code> 将过滤标题包含这些关键词的番剧
                 </div>
-                <input type="text" is="emby-input" id="${eleIds.animeTitleBlacklistInput}"
+                <input type="text"  id="${eleIds.animeTitleBlacklistInput}"
                     class="${classes.embyInput}"
                     value="${escapeHtml(animeTitleBlacklist)}"
                     placeholder="留空表示不过滤，示例: 剧场版|OVA|特别篇" />
@@ -7535,20 +7669,20 @@
                 <div class="${classes.embyFieldDesc}" style="margin-bottom: 0.5em;">
                     用于过滤 OP、ED、特典、PV 等非正片内容
                 </div>
-                <textarea is="emby-textarea" id="${eleIds.episodeTitleBlacklistInput}"
+                <textarea  id="${eleIds.episodeTitleBlacklistInput}"
                     class="${classes.embyInput}"
                     style="min-height: 100px; font-family: monospace;"
                     placeholder="留空表示不过滤">${escapeHtml(episodeTitleBlacklist)}</textarea>
             </div>
 
             <div style="display: flex; gap: 0.5em;">
-                <button is="emby-button" type="button" class="raised" id="saveBlacklistBtn">
+                <button  type="button" class="raised" id="saveBlacklistBtn">
                     <span>保存设置</span>
                 </button>
-                <button is="emby-button" type="button" class="raised" id="resetBlacklistBtn">
+                <button  type="button" class="raised" id="resetBlacklistBtn">
                     <span>恢复默认</span>
                 </button>
-                <button is="emby-button" type="button" class="raised" id="testBlacklistBtn">
+                <button  type="button" class="raised" id="testBlacklistBtn">
                     <span>测试正则</span>
                 </button>
             </div>
@@ -7702,13 +7836,13 @@
                 <div id="${eleIds.consoleLogSearchInput}" style="margin-top:4px;"></div>
                 <div id="${eleIds.consoleLogInfo}">
                     <textarea id="${eleIds.consoleLogText}" readOnly style="resize: vertical;margin-top: 0.6em;"
-                        rows="12" is="emby-textarea" class="txtOverview emby-textarea"></textarea>
+                        rows="12"  class="txtOverview emby-textarea"></textarea>
                     <textarea id="${eleIds.consoleLogTextInput}" hidden style="resize: vertical;"
-                        rows="1" is="emby-textarea" class="txtOverview emby-textarea"></textarea>
+                        rows="1"  class="txtOverview emby-textarea"></textarea>
                 </div>
                 <div class="${classes.embyFieldDesc}">注意开启后原本控制台中调用方信息将被覆盖,不使用请保持关闭状态</div>
                 <div id="${eleIds.consoleLogCtrl}"></div>
-                <div is="emby-collapse" title="开发者选项">
+                <div  title="开发者选项">
                     <div class="${classes.collapseContentNav}">
                         <label class="${classes.embyLabel}">调试开关: </label>
                         <div id="${eleIds.debugCheckbox}" class="${classes.embyCheckboxList}" style="${styles.embyCheckboxList}"></div>
@@ -7716,7 +7850,7 @@
                         <div id="${eleIds.debugButton}"></div>
                     </div>
                 </div>
-                <div is="emby-collapse" title="开放源代码许可" data-expanded="true" style="margin-top: 0.6em;">
+                <div  title="开放源代码许可" data-expanded="true" style="margin-top: 0.6em;">
                     <div id="${eleIds.openSourceLicenseDiv}" class="${classes.collapseContentNav}" style="display: flex; flex-direction: column;"></div>
                 </div>
             </div>
@@ -7867,6 +8001,10 @@
         //     }
         // }));
         const dialogContainer = document.querySelector('.' + classes.dialogContainer);
+        if (!dialogContainer || !dialogContainer.firstChild) {
+            logger.debug('[buildDebugCheckbox] dialogContainer not found or empty, skipping');
+            return;
+        }
         const centeredDialog = dialogContainer.firstChild;
         // lsKeys.debugDialogHyalinize
         const isExist1 = dialogContainer.classList.contains(classes.dialogBackdropOpened);
@@ -8199,9 +8337,12 @@
 
     // --- 手动搜索：并行模式 (速度优先，聚合结果) ---
     async function doDanmakuSearchEpisode() {
+        console.log('[dd-danmaku] doDanmakuSearchEpisode called');
         let embySearch = getById(eleIds.danmakuSearchName);
+        console.log('[dd-danmaku] embySearch:', embySearch ? 'found' : 'NOT FOUND', 'id:', eleIds.danmakuSearchName);
         if (!embySearch) { return; }
         let searchName = embySearch.value;
+        console.log('[dd-danmaku] searchName:', searchName);
         const danmakuRemarkEle = getById(eleIds.danmakuRemark);
         danmakuRemarkEle.parentNode.hidden = false;
         danmakuRemarkEle.innerText = searchName ? '' : '请填写标题';
@@ -8334,14 +8475,17 @@
 
     function doSearchTitleSwtich(e) {
         const searchInputEle = getById(eleIds.danmakuSearchName);
+        if (!searchInputEle) { return; }
         const attrKey = 'isOriginalTitle';
         if ('1' === e.target.getAttribute(attrKey)) {
             e.target.setAttribute(attrKey, '0');
-            const opts = window.ede.searchDanmakuOpts;
+            const opts = window.ede.searchDanmakuOpts || {};
             const appendSE = lsGetItem(lsKeys.appendSeasonEpisode.id);
-            return searchInputEle.value = appendSE ? opts.animeName : (opts.seriesName || opts.animeName);
+            return searchInputEle.value = appendSE ? (opts.animeName || '') : (opts.seriesName || opts.animeName || '');
         }
-        const { _episode_key, seriesOrMovieId } = window.ede.searchDanmakuOpts;
+        const opts = window.ede.searchDanmakuOpts || {};
+        const { _episode_key, seriesOrMovieId } = opts;
+        if (!seriesOrMovieId) { logger.warn('doSearchTitleSwtich: no seriesOrMovieId'); return; }
         const episode_info = JSON.parse(localStorage.getItem(_episode_key) || 'null');
         const animeOriginalTitle = episode_info?.animeOriginalTitle;
         if (animeOriginalTitle) {
@@ -8776,7 +8920,9 @@
      * function will not setAttribute
      */
     function embyInput(props, onEnter, onChange) {
-        const input = document.createElement('input', { is: 'emby-input' });
+        // Jellyfin 适配: 不使用 createElement 的第二个参数
+        const input = document.createElement('input');
+        input.setAttribute('is', 'emby-input');
         objectEntries(props).forEach(([key, value]) => {
             if (typeof value !== 'function') {
                 input.setAttribute(key, value);
@@ -8809,8 +8955,8 @@
 
     function embyI(iconKey, extClassName) {
         const iNode = document.createElement('i');
-        iNode.className = 'md-icon' + (extClassName ? ' ' + extClassName : '');
-        iNode.style = 'pointer-events: none;';
+        iNode.style = 'pointer-events: none;display:inline-flex;align-items:center;justify-content:center;';
+        // Jellyfin 适配: 直接设置 innerHTML（支持 SVG 图标）
         iNode.innerHTML = iconKey;
         return iNode;
     }
@@ -8890,7 +9036,7 @@
     function embyButton(props, onClick) {
         const button = document.createElement('button');
         // !!! important: this is must setAttribute('is', 'emby-xxx'), unknown reason
-        button.setAttribute('is', 'emby-button');
+        button.classList.add('emby-button');
         button.setAttribute('type', 'button');
         objectEntries(props).forEach(([key, value]) => {
             if (key !== 'iconKey' && key !== 'danmakuTextBtn' && typeof value !== 'function') { button.setAttribute(key, value); }
@@ -8983,14 +9129,19 @@
             button.classList.add(...classes.embyButtons.basic.split(' '));
             button.textContent = props.label;
         }
-        if (typeof onClick === 'function') { button.addEventListener('click', onClick); }
+        if (typeof onClick === 'function') {
+            button.addEventListener('click', function(e) {
+                console.log('[dd-danmaku] button clicked:', props.label || props.id || 'unknown');
+                onClick(e);
+            });
+        }
         return button;
     }
 
     function embyALink(href, text) {
         const aEle = document.createElement('a');
         // !!! important: this is must setAttribute('is', 'emby-xxx'), unknown reason
-        aEle.setAttribute('is', 'emby-linkbutton');
+        aEle.classList.add('emby-button','button-link');
         aEle.href = href;
         aEle.textContent = text || href;
         aEle.target = '_blank';
@@ -9017,9 +9168,8 @@
     }
 
     function embyTabs(options, selectedValue, optionValueKey, optionTitleKey, onChange) {
-        // !!! important: this is must { is: 'emby-xxx' }, unknown reason
-        const tabs = document.createElement('div', { is: 'emby-tabs' });
-        tabs.setAttribute('data-index', '0');
+        // Jellyfin 适配: 纯标准 HTML，不使用 emby-tabs（polyfill 不支持）
+        const tabs = document.createElement('div');
         tabs.className = classes.embyTabsDiv1;
         tabs.style.width = 'fit-content';
         const tabsSlider = document.createElement('div');
@@ -9038,7 +9188,13 @@
         });
         tabs.append(tabsSlider);
         if (typeof onChange === 'function') {
-            tabs.addEventListener('tabchange', e => onChange(options[e.detail.selectedTabIndex], e.detail.selectedTabIndex));
+            tabsSlider.querySelectorAll('button').forEach(function(btn,idx){
+        btn.addEventListener('click',function(){
+            tabsSlider.querySelectorAll('button').forEach(function(b){b.classList.remove('emby-tab-button-active')});
+            btn.classList.add('emby-tab-button-active');
+            var opt=options[idx]; if(opt) onChange(opt,idx);
+        });
+    });
         }
         return tabs;
     }
@@ -9049,13 +9205,10 @@
         if (!Number.isInteger(selectedIndexOrValue)) {
             selectedIndexOrValue = options.indexOf(selectedIndexOrValue);
         }
-        // !!! important: this is must { is: 'emby-select' }
-        const selectElement = document.createElement('select', { is: 'emby-select'});
-        require(['browser'], (browser) => {
-            if (browser.tv) {
-                selectElement.classList.add(classes.embySelectTv);
-            }
-        });
+        // Jellyfin 适配: 标准 select，不使用 emby-select 类
+        const selectElement = document.createElement('select');
+        selectElement.style.cssText = 'background:rgba(255,255,255,0.1);color:#fff;' +
+            'border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 10px;';
         objectEntries(props).forEach(([key, value]) => {
             if (typeof value !== 'function') { selectElement.setAttribute(key, value); }
         });
@@ -9085,8 +9238,7 @@
 
     function embyCheckboxList(id, checkBoxName, selectedStrArray, options, onChange, isVertical = false) {
         const checkboxContainer = document.createElement('div');
-        checkboxContainer.setAttribute('class', classes.embyCheckboxList);
-        checkboxContainer.setAttribute('style', isVertical ? '' : styles.embyCheckboxList);
+        checkboxContainer.style.cssText = isVertical ? 'display:flex;flex-direction:column;gap:8px;' : 'display:flex;flex-wrap:wrap;gap:8px;';
         checkboxContainer.setAttribute('id', id);
         options.forEach(option => {
             checkboxContainer.append(embyCheckbox({ name: checkBoxName, label: option.name, value: option.id }
@@ -9096,22 +9248,19 @@
     }
 
     function embyCheckbox({ id, name, label, value }, checked = false, onChange) {
+        // Jellyfin 适配: 使用标准 HTML，避免 emby-checkbox 触发 polyfill 的 htmlFor 错误
         const checkboxLabel = document.createElement('label');
-        checkboxLabel.classList.add('emby-checkbox-label');
-        checkboxLabel.setAttribute('style', 'width: auto;');
-        // !!! important: this is must { is: 'emby-xxx' }, unknown reason
-        const checkbox = document.createElement('input', { is: 'emby-checkbox' });
+        checkboxLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;color:#ccc;';
+        const checkbox = document.createElement('input');
         checkbox.setAttribute('type', 'checkbox');
         checkbox.setAttribute('id', id);
-        checkbox.setAttribute('name', name);
-        checkbox.setAttribute('value', value);
+        if (name) { checkbox.setAttribute('name', name); }
+        if (value) { checkbox.setAttribute('value', value); }
         checkbox.checked = checked;
-        checkbox.classList.add('emby-checkbox', 'chkEnableLiveTvAccess');
         if (typeof onChange === 'function') {
             checkbox.addEventListener('change', e => onChange(e.target.checked));
         }
         const span = document.createElement('span');
-        span.setAttribute('class', 'checkboxLabel');
         span.textContent = label;
         checkboxLabel.append(checkbox);
         checkboxLabel.append(span);
@@ -9125,12 +9274,14 @@
     function embyTextarea(props, onBlur) {
         const defaultProps = { rows: 10, styleResize: 'vertical', readonly: false };
         props = { ...defaultProps, ...props };
-        const textarea = document.createElement('textarea', { is: 'emby-textarea' });
+        // Jellyfin 适配: 标准 textarea，不使用 emby-textarea 类
+        const textarea = document.createElement('textarea');
+        textarea.style.cssText = 'width:100%;background:rgba(255,255,255,0.1);color:#fff;' +
+            'border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:8px;';
         objectEntries(props).forEach(([key, value]) => {
             if (typeof value !== 'function' && key !== 'readonly'
                 && key !== 'styleResize' && key !== 'value') { textarea.setAttribute(key, value); }
         });
-        textarea.className = 'txtOverview emby-textarea';
         textarea.readOnly = props.readonly;
         textarea.style.resize = props.styleResize;
         textarea.value = props.value;
@@ -9152,9 +9303,10 @@
             'data-bubble': false, 'data-hoverthumb': true , style: '',
         };
         const options = { ...defaultOpts, ...opts };
-        // !!! important: this is must { is: 'emby-xxx' }, unknown reason
-        const slider = document.createElement('input', { is: 'emby-slider' });
+        // Jellyfin 适配: 标准 HTML range input，不使用 emby-slider 类
+        const slider = document.createElement('input');
         slider.setAttribute('type', 'range');
+        slider.style.cssText = 'width:100%;accent-color:#00a4ff;';
         if (opts.id) { slider.setAttribute('id', opts.id); }
         objectEntries(options).forEach(([key, value]) => {
             if (key === 'lsKey') {
@@ -9185,7 +9337,9 @@
             });
         }
         if (options.value) {
-            slider.setValue(options.value);
+            // Jellyfin 适配: 标准 HTML input 使用 .value 而非 setValue()
+            slider.value = options.value;
+            slider.setAttribute('value', options.value);
             waitForElement({ element: slider, needParent: true }, (ele) => {
                 const e = new Event('change');
                 e.isManual = true;
@@ -9222,7 +9376,7 @@
     }
 
     function closeEmbyDialog() {
-        getByClass(classes.formDialogFooterItem).dispatchEvent(new Event('click'));
+        closeDialog();
     }
 
     function embyImg(src, style, id, draggable = false) {
@@ -9268,7 +9422,11 @@
     async function embyToast(opts = {}) {
         const defaultOpts = { text: '', secondaryText: '', icon: '', iconStrikeThrough: false};
         opts = { ...defaultOpts, ...opts };
-        return require(['toast'], toast => toast(opts));
+        // Jellyfin 适配: require 返回的是数组，需要解包
+        return require(['toast'], toast => {
+            const fn = Array.isArray(toast) ? toast[0] : toast;
+            if (typeof fn === 'function') { fn(opts); }
+        });
     }
 
 
@@ -10020,7 +10178,8 @@
     }
 
     function destroyAllInterval() {
-        // [优化] forEach 做副作用，map 应用于需要返回值的场景
+        if(!window.ede||!window.ede.destroyIntervalIds)return;
+        // forEach 做副作用，map 应用于需要返回值的场景
         window.ede.destroyIntervalIds.forEach(id => clearInterval(id));
         window.ede.destroyIntervalIds = [];
     }
@@ -10223,6 +10382,108 @@
     }
 
     function initCss() {
+        // Jellyfin 适配: 按钮容器样式（只注入一次）
+        if (!document.querySelector('style[dd-danmaku-float-btn]')) {
+            var floatStyle = document.createElement('style');
+            floatStyle.setAttribute('dd-danmaku-float-btn', '');
+            floatStyle.innerHTML = `
+                #${eleIds.danmakuCtr} {
+                    display: inline-flex;
+                    gap: 4px;
+                    align-items: center;
+                    transition: opacity 0.3s;
+                }
+                #${eleIds.danmakuCtr} .emby-button {
+                    color: #ccc;
+                    width: 36px;
+                    height: 36px;
+                }
+                #${eleIds.danmakuCtr} .emby-button:hover {
+                    color: #fff;
+                    background: rgba(255,255,255,0.15);
+                }
+                #${eleIds.danmakuCtr} .dd-btn-text {
+                    font-size: 1.2em;
+                }
+                #dd-danmaku-sidebar {
+                    color: #ccc;
+                    font-family: sans-serif;
+                }
+                #dd-danmaku-sidebar label {
+                    color: #ccc;
+                }
+                #dd-danmaku-sidebar input[type="text"],
+                #dd-danmaku-sidebar input[type="number"],
+                #dd-danmaku-sidebar textarea,
+                #dd-danmaku-sidebar select {
+                    background: rgba(255,255,255,0.1);
+                    border: 1px solid rgba(255,255,255,0.2);
+                    color: #fff;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    width: 100%;
+                    box-sizing: border-box;
+                }
+                #dd-danmaku-sidebar input[type="range"] {
+                    accent-color: #00a4ff;
+                }
+                /* 弹窗内的样式 */
+                #${eleIds.dialogContainer} label { color: #ccc; }
+                #${eleIds.dialogContainer} input[type="text"],
+                #${eleIds.dialogContainer} input[type="number"],
+                #${eleIds.dialogContainer} textarea,
+                #${eleIds.dialogContainer} select {
+                    background: rgba(255,255,255,0.1);
+                    border: 1px solid rgba(255,255,255,0.2);
+                    color: #fff;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                }
+                #${eleIds.dialogContainer} input[type="range"] { accent-color: #00a4ff; }
+                #${eleIds.dialogContainer} .inputLabel { color: #ccc; display: inline-block; min-width: 5em; }
+                /* 弹窗内详细样式修复 */
+                #${eleIds.dialogContainer} { font-size: 14px; line-height: 1.6; }
+                #${eleIds.dialogContainer} > div { margin-bottom: 12px; }
+                #${eleIds.dialogContainer} img { max-width: 100%; height: auto; border-radius: 4px; }
+                #${eleIds.dialogContainer} textarea { width: 100%; min-height: 200px; resize: vertical; }
+                #${eleIds.dialogContainer} h4 { color: #fff; margin: 12px 0 8px 0; font-size: 15px; }
+                /* 高级设置折叠面板 */
+                #${eleIds.dialogContainer} > div > div[style*="display: flex"] {
+                    flex-wrap: wrap;
+                    gap: 8px;
+                    margin-bottom: 8px;
+                }
+                /* 弹幕信息封面 + 文字布局 */
+                #${eleIds.dialogContainer} > div > div > img {
+                    float: left;
+                    margin-right: 12px;
+                    margin-bottom: 8px;
+                    max-width: 120px;
+                }
+                /* 下拉选框选项 - 深色背景 */
+                #${eleIds.dialogContainer} select option {
+                    background: #2a2a3e;
+                    color: #fff;
+                    padding: 4px 8px;
+                }
+                #${eleIds.dialogContainer} select option:checked {
+                    background: #00a4ff;
+                    color: #fff;
+                }
+                /* 控制台日志区域 */
+                #${eleIds.dialogContainer} textarea[readonly] {
+                    background: rgba(0,0,0,0.3);
+                    font-family: monospace;
+                    font-size: 12px;
+                    max-height: 300px;
+                }
+                /* 确保弹窗内所有按钮可点击 */
+                #dd-dlg-overlay { pointer-events: auto; }
+                #dd-dlg-content button { pointer-events: auto; }
+                #dd-dlg-content { pointer-events: auto; }
+            `;
+            document.head.appendChild(floatStyle);
+        }
         // 修复emby小秘版播放过程中toast消息提示框不显示问题
         if (OS.isEmbyNoisyX()) {
             const existingStyle = document.querySelector('style[css-emby-noisyx-fix]');
@@ -10372,6 +10633,36 @@
             `;
             document.head.appendChild(ringStyle);
         }
+        // Jellyfin 弹窗样式（只注入一次）
+        if (!document.querySelector('style[dd-danmaku-dialog]')) {
+            const dlgStyle = document.createElement('style');
+            dlgStyle.setAttribute('dd-danmaku-dialog', '');
+            dlgStyle.innerHTML = `
+                #dd-dlg-overlay { position: fixed !important; inset: 0 !important; z-index: 999998 !important; }
+                #dd-dlg-content { box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important; }
+                #dd-dlg-content .emby-tab-button {
+                    background: transparent; border: none; color: #ccc; padding: 8px 16px;
+                    cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
+                }
+                #dd-dlg-content .emby-tab-button.emby-tab-button-active {
+                    color: #00a4ff; border-bottom-color: #00a4ff;
+                }
+                #dd-dlg-content .emby-tab-button:hover { color: #fff; }
+                #dd-dlg-content .emby-input {
+                    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+                    color: #fff; padding: 6px 10px; border-radius: 4px; width: 100%;
+                }
+                #dd-dlg-content .emby-select {
+                    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+                    color: #fff; padding: 6px 10px; border-radius: 4px;
+                }
+                #dd-dlg-content .emby-checkbox-list label { color: #ccc; }
+                #dd-dlg-content .fieldDescription { color: #888; font-size: 0.85em; margin-top: 2px; }
+                #dd-dlg-content .inputLabel { color: #ccc; display: inline-block; min-width: 5em; }
+                #dd-dlg-content input[type="range"] { accent-color: #00a4ff; }
+            `;
+            document.head.appendChild(dlgStyle);
+        }
     }
 
     function removeHeaderClock() {
@@ -10439,7 +10730,7 @@
      */
     async function playbackEventsRefresh(eventsMap) {
         const [playbackManager, events] = await Promise.all([new Promise(resolve => require(['playbackManager'], resolve)), new Promise(resolve => require(['events'], resolve))]);
-        const player = playbackManager.getCurrentPlayer();
+        const player = playbackManager ? playbackManager.getCurrentPlayer() : null;
         if (!player) { return; }
         objectEntries(eventsMap).forEach(([eventName, fn]) => {
             // 无法修改 fn ,会导致引用变更重复添加,events.off 中的 array.indexOf(fn) 返回 -1
@@ -10603,7 +10894,16 @@
         if (danmakuCtr) {
             danmakuCtr.remove();
         }
-        window._ddDanmakuInitUILock = false; // [修复] 重置全局锁，允许下次播放重新初始化
+        // 清理定期重试定时器
+        if (window._ddDanmakuInitInterval) {
+            clearInterval(window._ddDanmakuInitInterval);
+            window._ddDanmakuInitInterval = null;
+        }
+        // Jellyfin 适配: 仅当真正退出播放页时才重置锁
+        // Jellyfin 10.9+ 的 OSD 隐藏也会触发 viewbeforehide，此时不应重置
+        if (e.detail.type === 'video-osd' && (!e.detail.params || !e.detail.params.id)) {
+            window._ddDanmakuInitUILock = false;
+        }
        // const h5VideoAdapterEle = getById(eleIds.h5VideoAdapter);
        // if (h5VideoAdapterEle) {
        //     h5VideoAdapterEle.remove();
@@ -10625,7 +10925,7 @@
         logger.debug(`监听到视图切换事件 (viewshow), 类型: ${e.detail.type}`);
         customeUrl.init();
         lsGetItem(lsKeys.quickDebugOn.id) && !getById(eleIds.danmakuSettingBtnDebug) && quickDebug();
-        addEasterEggListener();
+        try{addEasterEggListener()}catch(e){}
 
         // 仅在进入播放页(video-osd)时才初始化和设置数据
         if (e.detail.type === 'video-osd') {
@@ -10633,16 +10933,102 @@
             if (!window.ede) { window.ede = new EDE(); }
 
             // [修复] 2. 移到这里：确保 window.ede 存在后再赋值
-            window.ede.itemId = e.detail.params.id ? e.detail.params.id : '';
+            // Jellyfin 兼容: params 可能不存在，需要安全检查
+            // [修复] viewshow 多次触发时不清空已有 itemId，避免异步获取中被重置
+            var newItemId = (e.detail && e.detail.params && e.detail.params.id) ? e.detail.params.id : '';
+            if (newItemId) {
+                window.ede.itemId = newItemId;
+            }
+            // 如果同步能拿到 itemId 但当前为空，也更新
+            if (!window.ede.itemId && newItemId) {
+                window.ede.itemId = newItemId;
+            }
+
+            // === 同步获取 itemId（按优先级依次尝试） ===
+
+            // 备用0: 从 localStorage 缓存提取（上次成功播放的 itemId，最快）
+            if (!window.ede.itemId) {
+                var cachedItemId = localStorage.getItem('ede_last_item_id');
+                if (cachedItemId) { window.ede.itemId = cachedItemId; }
+            }
+
+            // 备用1: 从 URL hash 提取（最快，同步）
+            if (!window.ede.itemId) {
+                var urlMatch = (window.location.hash + '&' + window.location.search).match(/[?&]id=([^&]+)/);
+                if (urlMatch) { window.ede.itemId = decodeURIComponent(urlMatch[1]); }
+            }
+            // 备用2: 从 Jellyfin 全局状态提取（Jellyfin 10.9+ 通常在 window 上暴露播放器信息）
+            if (!window.ede.itemId && window.ApiClient && window.ApiClient.getLastPlaybackInfo) {
+                try {
+                    var lastInfo = window.ApiClient.getLastPlaybackInfo();
+                    if (lastInfo && lastInfo.ItemId) { window.ede.itemId = lastInfo.ItemId; }
+                } catch(err) {}
+            }
+            // 备用3: 从 DOM data-item-id 属性提取
+            if (!window.ede.itemId) {
+                var el = document.querySelector('[data-item-id]');
+                if (el) { window.ede.itemId = el.getAttribute('data-item-id'); }
+            }
+            // 备用4: 从 Jellyfin 全局 currentPlayer 提取
+            if (!window.ede.itemId && typeof currentPlayer !== 'undefined' && currentPlayer && currentPlayer.currentItem) {
+                window.ede.itemId = currentPlayer.currentItem.Id || '';
+            }
+
+            console.log('[dd-danmaku] itemId (sync):', window.ede.itemId || '(empty)');
+
+            // 同步拿到 itemId 后缓存到 localStorage
+            if (window.ede.itemId) {
+                localStorage.setItem('ede_last_item_id', window.ede.itemId);
+            }
+
+            // === 异步补充（当同步方法都失败时） ===
+            if (!window.ede.itemId && typeof ApiClient !== 'undefined') {
+                var tryGetItemIdAsync = function() {
+                    // 优先: getSessions (Jellyfin 10.9+ 可靠)
+                    if (ApiClient.getSessions) {
+                        ApiClient.getSessions({userId: ApiClient.getCurrentUserId()}).then(function(sessions) {
+                            if (sessions && sessions.length > 0) {
+                                for (var i = 0; i < sessions.length; i++) {
+                                    if (sessions[i].NowPlayingItem && sessions[i].NowPlayingItem.Id) {
+                                        console.log('[dd-danmaku] itemId async from getSessions:', sessions[i].NowPlayingItem.Id);
+                                        window.ede.itemId = sessions[i].NowPlayingItem.Id;
+                                        localStorage.setItem('ede_last_item_id', window.ede.itemId);
+                                        return;
+                                    }
+                                }
+                            }
+                        }).catch(function(){});
+                    }
+                };
+                tryGetItemIdAsync();
+            }
 
             if (!window.ede.appLogAspect && lsGetItem(lsKeys.consoleLogEnable.id)) {
                 window.ede.appLogAspect = new AppLogAspect().init();
             }
             initUI();
             initH5VideoAdapter();
-            // loadDanmaku(LOAD_TYPE.INIT);
             initListener();
+            // Jellyfin: playbackManager 不存在，playbackstart 事件无法注册
+            // 改为轮询等待 itemId 就绪后触发自动匹配
+            (function waitForItemIdAndLoad() {
+                if (window.ede && window.ede.itemId) {
+                    loadDanmaku(LOAD_TYPE.INIT);
+                } else {
+                    setTimeout(waitForItemIdAndLoad, 300);
+                }
+            })();
             initCss();
+
+            // Jellyfin 适配: 定期检查并重建被移除的按钮
+            // Jellyfin 10.9+ 频繁重渲染播放器控件会导致注入的按钮被移除
+            if (window._ddDanmakuInitInterval) { clearInterval(window._ddDanmakuInitInterval); }
+            window._ddDanmakuInitInterval = setInterval(() => {
+                if (!document.getElementById(eleIds.danmakuCtr)) {
+                    console.log('[dd-danmaku] buttons missing, recreating...');
+                    initUI();
+                }
+            }, 1000);
             // 进入播放页时提前预热 wasm，确保后续签名请求时 wasm 已就绪（无条件触发，内部判断 URL）
             ddSign.warmup();
         }
@@ -10683,7 +11069,7 @@
         // 检查是否已经有视频元素（说明已经在播放页面）
         const hasVideoElement = document.querySelector('video');
 
-        logger.debug(`[dd-danmaku] 当前路径: ${currentPath}, 是否播放页: ${isVideoOsdPage}, 是否有视频元素: ${!!hasVideoElement}`);
+        console.log(`[dd-danmaku] 当前路径: ${currentPath}, 是否播放页: ${isVideoOsdPage}, 是否有视频元素: ${!!hasVideoElement}`);
 
         if (isVideoOsdPage || hasVideoElement) {
             logger.info('[dd-danmaku] 检测到已在播放页面，手动触发初始化...');
@@ -11081,5 +11467,14 @@
         // 事件监听器清理
         eventManager.cleanup();
     });
+
+    // [Jellyfin 兼容] 屏蔽 Jellyfin webcomponents polyfill 的 htmlFor 错误
+    window.addEventListener('error', function(e) {
+        if (e.message && e.message.indexOf('htmlFor') !== -1) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return false;
+        }
+    }, true); // useCapture=true 优先捕获
 
 })();
