@@ -1,18 +1,18 @@
-{
+﻿{
     "category": "Media Player",
     "changelog": "Initial Jellyfin port from Emby DD-Danmaku plugin",
     "description": "Jellyfin danmaku plugin - fetch danmaku from DanDanPlay and display in player",
     "guid": "4b59d7ce-5a09-4f14-a5ca-0b9e9c8e53d7",
     "name": "DD-Danmaku",
-    "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player. Supports local danmaku XML management, smart episode matching, custom danmaku API server.",
+    "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player.",
     "owner": "505653375",
     "sourceUrl": "https://github.com/505653375/dd-danmaku",
     "versions": [
         {
             "checksum": "32ed0896a105b972aeea3eca0d9269f3",
-            "changelog": "- Initial Jellyfin version\n- Danmaku playback, search, filter\n- Local danmaku XML management\n- Smart episode matching",
+            "changelog": "- Initial Jellyfin version",
             "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/Jellyfin.Plugin.DD.Danmaku.dll",
-            "targetAbi": "10.9.0",
+            "targetAbi": "12.1.0",
             "timestamp": "2025-01-01T00:00:00Z",
             "version": "1.0.0"
         }
