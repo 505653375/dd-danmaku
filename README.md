@@ -23,7 +23,7 @@ jellyfin 弹幕插件
 
 <!-- 本地版 (需自行下载脚本文件) -->
 <script src="ede.js" charset="utf-8"></script>
-```
+
 
 
 其他方法可以自行研究
