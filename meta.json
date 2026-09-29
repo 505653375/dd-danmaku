@@ -1,20 +1,21 @@
 ﻿{
-    "description":  "Jellyfin danmaku plugin - fetch danmaku from DanDanPlay and display in player",
-    "category":  "Media Player",
-    "guid":  "4b59d7ce-5a09-4f14-a5ca-0b9e9c8e53d7",
-    "owner":  "505653375",
-    "name":  "DD-Danmaku",
-    "sourceUrl":  "https://github.com/505653375/dd-danmaku",
-    "versions":  [
-                     {
-                         "changelog":  "- Initial Jellyfin version (.NET 9.0)",
-                         "version":  "1.0.0",
-                         "checksum":  "2b76e70130bf3bad733ac9bf70dd48a2",
-                         "timestamp":  "2026-09-29T14:31:57Z",
-                         "targetAbi":  "12.1.0",
-                         "sourceUrl":  "https://github.com/505653375/dd-danmaku/raw/master/output/Jellyfin.Plugin.DD.Danmaku.dll"
-                     }
-                 ],
-    "changelog":  "Initial Jellyfin port from Emby DD-Danmaku plugin",
-    "overview":  "Fetch danmaku from DanDanPlay and display in Jellyfin player."
+    "category": "Media Player",
+    "changelog": "Initial Jellyfin port from Emby DD-Danmaku plugin",
+    "description": "Jellyfin danmaku plugin - fetch danmaku from DanDanPlay and display in player",
+    "guid": "4b59d7ce-5a09-4f14-a5ca-0b9e9c8e53d7",
+    "imageUrl": "https://raw.githubusercontent.com/505653375/dd-danmaku/master/logo.svg",
+    "name": "DD-Danmaku",
+    "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player.",
+    "owner": "505653375",
+    "sourceUrl": "https://github.com/505653375/dd-danmaku",
+    "versions": [
+        {
+            "checksum": "2b76e70130bf3bad733ac9bf70dd48a2",
+            "changelog": "- Initial Jellyfin version (.NET 9.0)",
+            "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/Jellyfin.Plugin.DD.Danmaku.dll",
+            "targetAbi": "12.1.0",
+            "timestamp": "2026-09-29T14:31:57Z",
+            "version": "1.0.0"
+        }
+    ]
 }
