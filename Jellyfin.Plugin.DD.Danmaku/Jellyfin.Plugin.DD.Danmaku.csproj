@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Jellyfin.Plugin.DD.Danmaku</AssemblyName>
+    <RootNamespace>Jellyfin.Plugin.DD.Danmaku</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="10.10.7" ExcludeAssets="runtime" />
+    <PackageReference Include="Jellyfin.Model" Version="10.10.7" ExcludeAssets="runtime" />
+    <PackageReference Include="System.IO.Pipelines" Version="6.0.3" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Configuration\configPage.html" />
+    <EmbeddedResource Include="Resources\ede.js">
+      <LogicalName>Jellyfin.Plugin.DD.Danmaku.Resources.ede.js</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>
