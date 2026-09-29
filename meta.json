@@ -9,7 +9,7 @@
     "sourceUrl": "https://github.com/505653375/dd-danmaku",
     "versions": [
         {
-            "checksum": "00000000000000000000000000000000",
+            "checksum": "32ed0896a105b972aeea3eca0d9269f3",
             "changelog": "- 初始 Jellyfin 版本\n- 弹幕播放、搜索、过滤\n- 本地弹幕 XML 管理\n- 智能剧集匹配",
             "sourceUrl": "https://github.com/505653375/dd-danmaku",
             "targetAbi": "10.9",
