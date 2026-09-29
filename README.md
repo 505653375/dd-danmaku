@@ -18,11 +18,13 @@ jellyfin 弹幕插件
 
 在</body>前添加如下标签
 
-<完整版><script src="https://cdn.jsdelivr.net/gh/505653375/dd-danmaku@main/ede.js" charset="utf-8"></script>
+<完整版>
+<script src="https://cdn.jsdelivr.net/gh/505653375/dd-danmaku@main/ede.js" charset="utf-8"></script>
 
 
 
-<本地版 (需自行下载脚本文件)><script src="ede.js" charset="utf-8"></script>
+<本地版 (需自行下载脚本文件)>
+<script src="ede.js" charset="utf-8"></script>
 
 
 
