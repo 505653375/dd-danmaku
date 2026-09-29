@@ -1,7 +1,12 @@
 jellyfin-danmaku
-
 jellyfin 弹幕插件
-原来的/Izumiko/jellyfin-danmaku已经一年没有更新了，最近也不怎么好使，发现这位大佬l429609201/dd-danmaku的还有在更，就魔改了一下让jellyfin也能用上。代码都是AI跑的，本人并不会代码，凑合用。
+
+
+原来的/Izumiko/jellyfin-danmaku已经一年没有更新了，最近也不怎么好使，发现这位大佬l429609201/dd-danmaku的还有在更，就魔改了一下让jellyfin也能用上。代码都是AI跑的，本人并不会代码，凑合用。 还是有挺多BUG的，有空和token再修吧
+
+
+
+
 
 使用方法
 
@@ -19,6 +24,7 @@ jellyfin 弹幕插件
 <!-- 本地版 (需自行下载脚本文件) -->
 <script src="ede.js" charset="utf-8"></script>
 ```
+
 
 其他方法可以自行研究
 
