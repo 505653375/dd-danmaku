@@ -5,17 +5,16 @@
         "name": "DD-Danmaku",
         "description": "Jellyfin danmaku plugin - fetch danmaku from DanDanPlay and display in player",
         "owner": "505653375",
-        "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player. Supports local danmaku XML management, smart episode matching, custom danmaku API server.",
+        "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player.",
         "versions": [
             {
-                "checksum": "1296f83cc81f1eaa6e09b81b9e966d25",
-                "changelog": "- Initial Jellyfin version\n- Danmaku playback, search, filter\n- Local danmaku XML management\n- Smart episode matching",
+                "checksum": "eb114578b7a491635732bc58e191f9ec",
+                "changelog": "- Initial Jellyfin version (.NET 10.0)",
                 "targetAbi": "12.1.0.0",
-                "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/Jellyfin.Plugin.DD.Danmaku.dll",
+                "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/DD-Danmaku_1.0.0.0.zip",
                 "timestamp": "2026-09-30T06:00:00Z",
                 "version": "1.0.0.0"
             }
         ]
     }
 ]
-
