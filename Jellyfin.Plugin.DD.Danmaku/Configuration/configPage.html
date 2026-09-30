@@ -3,57 +3,57 @@
   <div data-role="content">
     <div class="content-primary">
       <form id="configForm">
+        <div class="checkboxContainer checkboxContainer-withDescription">
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="autoInjection" />
+                <span>启用自动注入</span>
+            </label>
+        </div>
+        <div class="checkboxContainer checkboxContainer-withDescription">
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="edeResource" />
+                <span>启用 ede.js 资源</span>
+            </label>
+        </div>
+        <div class="checkboxContainer checkboxContainer-withDescription">
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="filePersistence" />
+                <span>文件持久化</span>
+            </label>
+        </div>
+        <div class="checkboxContainer checkboxContainer-withDescription">
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="autoRefresh" />
+                <span>自动刷新弹幕</span>
+            </label>
+        </div>
+        <div class="inputContainer">
+            <label class="inputLabel" for="apiUrl">API 地址</label>
+            <input is="emby-input" id="apiUrl" type="text" class="emby-input" />
+        </div>
         <div class="selectContainer">
-          <label class="selectLabel" for="matchStrategy">匹配策略</label>
-          <select is="emby-select" id="matchStrategy" class="emby-select">
-            <option value="traditional-first">传统优先</option>
-            <option value="ai-first">AI优先</option>
-          </select>
+            <label class="selectLabel" for="matchStrategy">匹配策略</label>
+            <select is="emby-select" id="matchStrategy" class="emby-select">
+                <option value="traditional-first">传统优先</option>
+                <option value="ai-first">AI优先</option>
+            </select>
         </div>
         <div class="checkboxContainer checkboxContainer-withDescription">
-          <label class="checkboxContainer">
-            <input is="emby-checkbox" type="checkbox" id="autoInjection" />
-            <span>启用自动注入</span>
-          </label>
-        </div>
-        <div class="checkboxContainer checkboxContainer-withDescription">
-          <label class="checkboxContainer">
-            <input is="emby-checkbox" type="checkbox" id="edeResource" />
-            <span>启用 ede.js 资源</span>
-          </label>
-        </div>
-        <div class="checkboxContainer checkboxContainer-withDescription">
-          <label class="checkboxContainer">
-            <input is="emby-checkbox" type="checkbox" id="filePersistence" />
-            <span>文件持久化</span>
-          </label>
-        </div>
-        <div class="checkboxContainer checkboxContainer-withDescription">
-          <label class="checkboxContainer">
-            <input is="emby-checkbox" type="checkbox" id="autoRefresh" />
-            <span>自动刷新弹幕</span>
-          </label>
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="aiEnabled" />
+                <span>启用 AI 匹配</span>
+            </label>
         </div>
         <div class="inputContainer">
-          <label class="inputLabel" for="apiUrl">API 地址</label>
-          <input is="emby-input" id="apiUrl" type="text" class="emby-input" />
-        </div>
-        <div class="checkboxContainer checkboxContainer-withDescription">
-          <label class="checkboxContainer">
-            <input is="emby-checkbox" type="checkbox" id="aiEnabled" />
-            <span>启用 AI 匹配</span>
-          </label>
+            <label class="inputLabel" for="aiBaseUrl">AI 服务地址</label>
+            <input is="emby-input" id="aiBaseUrl" type="text" class="emby-input" />
         </div>
         <div class="inputContainer">
-          <label class="inputLabel" for="aiBaseUrl">AI 服务地址</label>
-          <input is="emby-input" id="aiBaseUrl" type="text" class="emby-input" />
-        </div>
-        <div class="inputContainer">
-          <label class="inputLabel" for="aiModel">AI 模型</label>
-          <input is="emby-input" id="aiModel" type="text" class="emby-input" />
+            <label class="inputLabel" for="aiModel">AI 模型</label>
+            <input is="emby-input" id="aiModel" type="text" class="emby-input" />
         </div>
         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-          <span>保存</span>
+            <span>保存</span>
         </button>
       </form>
     </div>
@@ -66,9 +66,29 @@
     var page = document.querySelector('#pluginConfigurationPage');
     var configForm = document.querySelector('#configForm');
 
+    function showStatus(msg, isError) {
+        var el = document.getElementById('status');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'status';
+            configForm.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.display = 'block';
+        el.style.color = isError ? '#f66' : '#6f6';
+        el.style.padding = '12px';
+        el.style.marginTop = '12px';
+        el.style.borderRadius = '4px';
+        el.style.background = isError ? '#3a1a1a' : '#1a3a1a';
+    }
+
     page.addEventListener('pageshow', function () {
-        Dashboard.showLoadingMsg();
+        if (typeof ApiClient === 'undefined') {
+            showStatus('ApiClient not found', true);
+            return;
+        }
         ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            console.log('Loaded config:', JSON.stringify(config));
             document.querySelector('#autoInjection').checked = config.AutoInjectionEnabled !== false;
             document.querySelector('#edeResource').checked = config.EdeResourceEnabled !== false;
             document.querySelector('#filePersistence').checked = config.FilePersistenceEnabled === true;
@@ -78,13 +98,19 @@
             document.querySelector('#aiEnabled').checked = config.AiEnabled === true;
             document.querySelector('#aiBaseUrl').value = config.AiBaseUrl || '';
             document.querySelector('#aiModel').value = config.AiModel || '';
-            Dashboard.hideLoadingMsg();
+        }).catch(function(e) {
+            showStatus('Load error: ' + e.message, true);
+            console.error('Load config error:', e);
         });
     });
 
     configForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        Dashboard.showLoadingMsg();
+        if (typeof ApiClient === 'undefined') {
+            showStatus('ApiClient not found', true);
+            return;
+        }
+
         ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             config.AutoInjectionEnabled = document.querySelector('#autoInjection').checked;
             config.EdeResourceEnabled = document.querySelector('#edeResource').checked;
@@ -96,10 +122,21 @@
             config.AiBaseUrl = document.querySelector('#aiBaseUrl').value;
             config.AiModel = document.querySelector('#aiModel').value;
 
+            console.log('Saving config:', JSON.stringify(config));
+
             ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
-                Dashboard.hideLoadingMsg();
-                Dashboard.processPluginConfigurationUpdateResult(result);
+                console.log('Save result:', JSON.stringify(result));
+                if (typeof Dashboard !== 'undefined') {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                }
+                showStatus('保存成功!', false);
+            }).catch(function(e) {
+                showStatus('Save error: ' + e.message, true);
+                console.error('Save config error:', e);
             });
+        }).catch(function(e) {
+            showStatus('Load error: ' + e.message, true);
+            console.error('Load config error:', e);
         });
     });
 })();
