@@ -8,7 +8,7 @@
         "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player.",
         "versions": [
             {
-                "checksum": "eb114578b7a491635732bc58e191f9ec",
+                "checksum": "73640937ce99f5d9c56326013f250cc7",
                 "changelog": "- Initial Jellyfin version (.NET 10.0)",
                 "targetAbi": "12.1.0.0",
                 "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/DD-Danmaku_1.0.0.0.zip",
@@ -18,3 +18,4 @@
         ]
     }
 ]
+
