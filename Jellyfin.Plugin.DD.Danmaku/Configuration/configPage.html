@@ -124,21 +124,11 @@
 
             console.log('Saving config:', JSON.stringify(config));
 
-            ApiClient.ajax({
-                type: 'POST',
-                url: ApiClient.getUrl('Plugins/' + pluginId + '/Configuration'),
-                data: JSON.stringify(config),
-                contentType: 'application/json',
-                dataType: 'json'
-            }).then(function (result) {
+            ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                 console.log('Save result:', JSON.stringify(result));
                 showStatus('保存成功!', false);
-                // reload config to confirm
-                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
-                    console.log('Verified config:', JSON.stringify(c));
-                });
             }).catch(function(e) {
-                showStatus('Save error: ' + (e.message || e.statusText || 'Unknown'), true);
+                showStatus('Save error: ' + e.message, true);
                 console.error('Save config error:', e);
             });
         }).catch(function(e) {
