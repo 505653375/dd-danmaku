@@ -9,7 +9,7 @@
         "imageUrl": "https://raw.githubusercontent.com/505653375/dd-danmaku/master/logo.svg",
         "versions": [
             {
-                "checksum": "6cc47508253f49ceac1d718f7f1f5040",
+                "checksum": "3165570a47b7daf1f85187c4977bbba5",
                 "changelog": "- Vue.js admin panel with Jellyfin compatibility",
                 "targetAbi": "12.1.0.0",
                 "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/DD-Danmaku_1.0.0.0.zip",
