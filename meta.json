@@ -8,8 +8,8 @@
         "overview": "Fetch danmaku from DanDanPlay and display in Jellyfin player.",
         "versions": [
             {
-                "checksum": "d149d511ae2bcdfae8ca0d263b997756",
-                "changelog": "- Fix config save issue - better error handling and logging",
+                "checksum": "5ca5e1f3307027e0cb57de524790d960",
+                "changelog": "- Fix config save and settings page",
                 "targetAbi": "12.1.0.0",
                 "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/DD-Danmaku_1.0.0.0.zip",
                 "timestamp": "2026-09-30T06:00:00Z",
