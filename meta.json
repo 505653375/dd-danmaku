@@ -10,11 +10,11 @@
     "sourceUrl": "https://github.com/505653375/dd-danmaku",
     "versions": [
         {
-            "checksum": "2b76e70130bf3bad733ac9bf70dd48a2",
-            "changelog": "- Initial Jellyfin version (.NET 9.0)",
+            "checksum": "1296f83cc81f1eaa6e09b81b9e966d25",
+            "changelog": "- Initial Jellyfin version (.NET 10.0)",
             "sourceUrl": "https://github.com/505653375/dd-danmaku/raw/master/output/Jellyfin.Plugin.DD.Danmaku.dll",
             "targetAbi": "12.1.0",
-            "timestamp": "2026-09-29T14:31:57Z",
+            "timestamp": "2025-01-01T00:00:00Z",
             "version": "1.0.0"
         }
     ]
