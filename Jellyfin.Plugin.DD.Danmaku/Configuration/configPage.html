@@ -15,82 +15,72 @@
         button { padding: 8px 20px; background: #00a4dc; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
         button:hover { background: #0088bb; }
         .status { padding: 12px; border-radius: 4px; margin-top: 12px; display: none; }
-        .status.success { background: #1a3a1a; display: block; color: #6f6; }
-        .status.error { background: #3a1a1a; display: block; color: #f66; }
+        .status.show { display: block; }
+        .status.success { background: #1a3a1a; color: #6f6; }
+        .status.error { background: #3a1a1a; color: #f66; }
     </style>
 </head>
 <body>
-    <h1>DD-Danmaku 弹幕插件</h1>
+    <h1>DD-Danmaku</h1>
 
     <div class="section">
-        <h2>基本设置</h2>
-        <div class="field">
-            <label>启用自动注入</label>
-            <input type="checkbox" id="autoInjection" checked />
-        </div>
-        <div class="field">
-            <label>启用 ede.js 资源</label>
-            <input type="checkbox" id="edeResource" checked />
-        </div>
-        <div class="field">
-            <label>文件持久化</label>
-            <input type="checkbox" id="filePersistence" />
-        </div>
-        <div class="field">
-            <label>自动刷新弹幕</label>
-            <input type="checkbox" id="autoRefresh" />
-        </div>
+        <h2>Basic</h2>
+        <div class="field"><label>Auto Injection</label><input type="checkbox" id="autoInjection" checked /></div>
+        <div class="field"><label>EDE Resource</label><input type="checkbox" id="edeResource" checked /></div>
+        <div class="field"><label>File Persistence</label><input type="checkbox" id="filePersistence" /></div>
+        <div class="field"><label>Auto Refresh</label><input type="checkbox" id="autoRefresh" /></div>
     </div>
 
     <div class="section">
-        <h2>弹幕 API</h2>
-        <div class="field">
-            <label>API 地址</label>
-            <input type="text" id="apiUrl" placeholder="https://api.dandanplay.net" />
-        </div>
-        <div class="field">
-            <label>匹配策略</label>
-            <input type="text" id="matchStrategy" value="traditional-first" />
-        </div>
+        <h2>Danmaku API</h2>
+        <div class="field"><label>API URL</label><input type="text" id="apiUrl" placeholder="https://api.dandanplay.net" /></div>
+        <div class="field"><label>Match Strategy</label><input type="text" id="matchStrategy" value="traditional-first" /></div>
     </div>
 
     <div class="section">
-        <h2>AI 匹配</h2>
-        <div class="field">
-            <label>启用 AI 匹配</label>
-            <input type="checkbox" id="aiEnabled" />
-        </div>
-        <div class="field">
-            <label>AI 服务地址</label>
-            <input type="text" id="aiBaseUrl" placeholder="https://api.openai.com/v1" />
-        </div>
-        <div class="field">
-            <label>AI 模型</label>
-            <input type="text" id="aiModel" placeholder="gpt-4o-mini" />
-        </div>
+        <h2>AI Matching</h2>
+        <div class="field"><label>Enable AI</label><input type="checkbox" id="aiEnabled" /></div>
+        <div class="field"><label>AI Base URL</label><input type="text" id="aiBaseUrl" placeholder="https://api.openai.com/v1" /></div>
+        <div class="field"><label>AI Model</label><input type="text" id="aiModel" placeholder="gpt-4o-mini" /></div>
     </div>
 
-    <button id="saveBtn">保存设置</button>
+    <button id="saveBtn">Save</button>
     <div id="status" class="status"></div>
 
     <script>
+    (function() {
         var pluginId = '4b59d7ce-5a09-4f14-a5ca-0b9e9c8e53d7';
+        var baseApi = '/Plugins/' + pluginId + '/Configuration';
 
-        function getApiClient() {
-            if (typeof ApiClient !== 'undefined') return ApiClient;
-            if (window.parent && typeof window.parent.ApiClient !== 'undefined') return window.parent.ApiClient;
-            if (window.top && typeof window.top.ApiClient !== 'undefined') return window.top.ApiClient;
-            return null;
+        function getToken() {
+            try {
+                var keys = Object.keys(localStorage);
+                for (var i = 0; i < keys.length; i++) {
+                    if (keys[i].indexOf('jellyfin') >= 0 && keys[i].indexOf('token') >= 0) {
+                        var val = localStorage.getItem(keys[i]);
+                        if (val && val.length > 10) return val;
+                    }
+                }
+            } catch(e) {}
+            var m = location.search.match(/api_key=([^&]+)/);
+            if (m) return m[1];
+            return '';
         }
 
-        async function loadConfig() {
-            var api = getApiClient();
-            if (!api) {
-                console.error('ApiClient not found');
-                return;
-            }
-            try {
-                var config = await api.getPluginConfiguration(pluginId);
+        function apiCall(method, body) {
+            var headers = { 'Content-Type': 'application/json' };
+            var token = getToken();
+            if (token) headers['Authorization'] = 'MediaBrowser Token="' + token + '"';
+            var opts = { method: method, headers: headers };
+            if (body) opts.body = JSON.stringify(body);
+            return fetch(baseApi, opts).then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            });
+        }
+
+        function loadConfig() {
+            apiCall('GET').then(function(config) {
                 document.getElementById('autoInjection').checked = config.AutoInjectionEnabled !== false;
                 document.getElementById('edeResource').checked = config.EdeResourceEnabled !== false;
                 document.getElementById('filePersistence').checked = config.FilePersistenceEnabled === true;
@@ -100,48 +90,38 @@
                 document.getElementById('aiEnabled').checked = config.AiEnabled === true;
                 document.getElementById('aiBaseUrl').value = config.AiBaseUrl || '';
                 document.getElementById('aiModel').value = config.AiModel || '';
-            } catch (e) {
-                console.error('Failed to load config:', e);
-            }
+            }).catch(function(e) {
+                showStatus('Load error: ' + e.message, 'error');
+            });
         }
 
-        async function saveConfig() {
-            var statusEl = document.getElementById('status');
-            var api = getApiClient();
-            if (!api) {
-                statusEl.className = 'status error';
-                statusEl.textContent = 'ApiClient not found';
-                return;
-            }
-            try {
-                var config = await api.getPluginConfiguration(pluginId);
-                config.AutoInjectionEnabled = document.getElementById('autoInjection').checked;
-                config.EdeResourceEnabled = document.getElementById('edeResource').checked;
-                config.FilePersistenceEnabled = document.getElementById('filePersistence').checked;
-                config.AutoRefreshOnNextPlayback = document.getElementById('autoRefresh').checked;
-                config.ApiUrl = document.getElementById('apiUrl').value;
-                config.MatchStrategy = document.getElementById('matchStrategy').value;
-                config.AiEnabled = document.getElementById('aiEnabled').checked;
-                config.AiBaseUrl = document.getElementById('aiBaseUrl').value;
-                config.AiModel = document.getElementById('aiModel').value;
-
-                await api.updatePluginConfiguration(pluginId, config);
-                if (typeof Dashboard !== 'undefined') {
-                    Dashboard.processPluginConfigurationUpdateResult({ Success: true });
-                }
-                statusEl.className = 'status success';
-                statusEl.textContent = 'Settings saved';
-            } catch (e) {
-                if (typeof Dashboard !== 'undefined') {
-                    Dashboard.processPluginConfigurationUpdateResult({ Success: false, ErrorMessage: e.message });
-                }
-                statusEl.className = 'status error';
-                statusEl.textContent = 'Error: ' + e.message;
-            }
+        function saveConfig() {
+            var config = {
+                AutoInjectionEnabled: document.getElementById('autoInjection').checked,
+                EdeResourceEnabled: document.getElementById('edeResource').checked,
+                FilePersistenceEnabled: document.getElementById('filePersistence').checked,
+                AutoRefreshOnNextPlayback: document.getElementById('autoRefresh').checked,
+                ApiUrl: document.getElementById('apiUrl').value,
+                MatchStrategy: document.getElementById('matchStrategy').value,
+                AiEnabled: document.getElementById('aiEnabled').checked,
+                AiBaseUrl: document.getElementById('aiBaseUrl').value,
+                AiModel: document.getElementById('aiModel').value
+            };
+            apiCall('POST', config).then(function() {
+                showStatus('Saved!', 'success');
+            }).catch(function(e) {
+                showStatus('Save error: ' + e.message, 'error');
+            });
         }
 
-        document.getElementById('saveBtn').addEventListener('click', function() { saveConfig(); });
-        setTimeout(function() { loadConfig(); }, 500);
+        function showStatus(msg, type) {
+            var el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = 'status show ' + type;
+        }
+
+        document.getElementById('saveBtn').addEventListener('click', saveConfig);
+    })();
     </script>
 </body>
 </html>
