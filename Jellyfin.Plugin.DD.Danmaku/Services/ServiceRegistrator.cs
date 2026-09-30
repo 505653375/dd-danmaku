@@ -4,12 +4,13 @@ using Jellyfin.Plugin.DD.Danmaku.Configuration;
 using Jellyfin.Plugin.DD.Danmaku.Danmaku;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.DependencyInjection;
 
-public static class ServiceRegistrator
+public class ServiceRegistrator : IPluginServiceRegistrator
 {
-    public static void RegisterServices(IServiceCollection serviceCollection)
+    public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<IResourceService>(sp =>
         {
@@ -51,5 +52,7 @@ public static class ServiceRegistrator
         });
 
         serviceCollection.AddSingleton<ApiFacade>();
+        serviceCollection.AddControllersWithViews()
+            .AddApplicationPart(typeof(ServiceRegistrator).Assembly);
     }
 }
