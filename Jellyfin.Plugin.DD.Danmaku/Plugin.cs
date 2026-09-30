@@ -42,8 +42,8 @@ public sealed partial class Plugin : BasePlugin<PluginConfiguration>, IHasWebPag
                 Name = "DD-Danmaku",
                 DisplayName = "DD-Danmaku 弹幕管理",
                 EmbeddedResourcePath = "Jellyfin.Plugin.DD.Danmaku.Configuration.configPage.html",
-                EnableInMainMenu = false,
-                MenuSection = null
+                EnableInMainMenu = true,
+                MenuSection = "server"
             }
         };
     }
