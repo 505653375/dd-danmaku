@@ -70,6 +70,38 @@ public class DanmakuController : ControllerBase
         return File(stream, contentType);
     }
 
+    [HttpGet("admin/index.html")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAdminIndex(CancellationToken cancellationToken)
+    {
+        var stream = await _resourceService.OpenAsync("Resources/Admin/index.html", cancellationToken);
+        if (stream is null)
+            return NotFound();
+        return File(stream, "text/html; charset=utf-8");
+    }
+
+    [HttpGet("admin/{*path}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAdminResource(string path, CancellationToken cancellationToken)
+    {
+        var resourcePath = "Resources/Admin/" + path;
+        var stream = await _resourceService.OpenAsync(resourcePath, cancellationToken);
+        if (stream is null)
+            return NotFound();
+        var contentType = _resourceService.GetContentType(path);
+        return File(stream, contentType);
+    }
+
+    [HttpGet("jellyfin-bridge.js")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetBridgeScript(CancellationToken cancellationToken)
+    {
+        var stream = await _resourceService.OpenAsync("Resources/Admin/jellyfin-bridge.js", cancellationToken);
+        if (stream is null)
+            return NotFound();
+        return File(stream, "application/javascript; charset=utf-8");
+    }
+
     [HttpGet("api/danmu/{itemId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<object>>> GetDanmaku(

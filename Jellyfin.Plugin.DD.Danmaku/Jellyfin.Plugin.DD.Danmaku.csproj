@@ -16,5 +16,8 @@
     <EmbeddedResource Include="Resources\ede.js">
       <LogicalName>Jellyfin.Plugin.DD.Danmaku.Resources.ede.js</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\Resources\Admin\**\*">
+      <LogicalName>Jellyfin.Plugin.DD.Danmaku.Resources.Admin.%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>
