@@ -1,4 +1,4 @@
-namespace Jellyfin.Plugin.DD.Danmaku;
+﻿namespace Jellyfin.Plugin.DD.Danmaku;
 
 using Jellyfin.Plugin.DD.Danmaku.Configuration;
 using Jellyfin.Plugin.DD.Danmaku.Services;
@@ -39,12 +39,13 @@ public sealed partial class Plugin : BasePlugin<PluginConfiguration>, IHasWebPag
         {
             new PluginPageInfo
             {
-                Name = "dd-danmaku-config",
+                Name = "DD-Danmaku",
                 DisplayName = "DD-Danmaku 弹幕管理",
                 EmbeddedResourcePath = "Jellyfin.Plugin.DD.Danmaku.Configuration.configPage.html",
-                EnableInMainMenu = true,
-                MenuSection = "server"
+                EnableInMainMenu = false,
+                MenuSection = null
             }
         };
     }
 }
+
